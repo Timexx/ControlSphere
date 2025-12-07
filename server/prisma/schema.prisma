@@ -1,0 +1,308 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db?connection_limit=1&pool_timeout=20"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  username  String   @unique
+  password  String
+  language  String?  // User's preferred language (e.g., 'en', 'de')
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  auditLogs AuditLog[]
+}
+
+model Machine {
+  id              String   @id @default(cuid())
+  hostname        String
+  ip              String
+  osInfo          String?  // JSON string: { distro, version, kernel }
+  status          String   @default("offline") // online, offline, error
+  lastSeen        DateTime @default(now())
+  secretKey       String?  @unique // DEPRECATED: Will be removed after migration
+  secretKeyHash   String?  @unique // Hashed secret key for authentication
+  secretVersion   Int      @default(1) // For secret rotation support
+  secretRotatedAt DateTime? // Timestamp of last secret rotation
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  metrics      Metric[]
+  commands     Command[]
+  ports        Port[]
+  links        MachineLink[]
+  tags         MachineTag[]
+  jobExecutions JobExecution[]
+  groupMembers GroupMember[]
+  auditLogs    AuditLog[]
+  packages     VMPackage[]
+  packageScans PackageScan[]
+  policyAssignments PolicyAssignment[]
+  securityEvents SecurityEvent[]
+  
+  @@index([status])
+  @@index([lastSeen])
+}
+
+model Metric {
+  id          String   @id @default(cuid())
+  machineId   String
+  machine     Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  
+  cpuUsage    Float    // Percentage
+  ramUsage    Float    // Percentage
+  ramTotal    Float    // GB
+  ramUsed     Float    // GB
+  diskUsage   Float    // Percentage
+  diskTotal   Float    // GB
+  diskUsed    Float    // GB
+  uptime      Int      // Seconds
+  
+  timestamp   DateTime @default(now())
+  
+  @@index([machineId, timestamp])
+}
+
+model Command {
+  id          String   @id @default(cuid())
+  machineId   String
+  machine     Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  
+  command     String
+  output      String?
+  exitCode    Int?
+  status      String   @default("pending") // pending, running, completed, failed
+  
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+  
+  @@index([machineId, createdAt])
+}
+
+model MachineTag {
+  id         String   @id @default(cuid())
+  machineId  String
+  machine    Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  key        String
+  value      String
+  createdAt  DateTime @default(now())
+
+  @@index([machineId])
+  @@index([key, value])
+}
+
+model Port {
+  id          String   @id @default(cuid())
+  machineId   String
+  machine     Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  
+  port        Int
+  proto       String   // tcp, udp
+  service     String   // Service name
+  state       String   // LISTEN, ESTABLISHED, etc.
+  
+  lastSeen    DateTime @default(now())
+  
+  @@unique([machineId, port, proto])
+  @@index([machineId])
+}
+
+model MachineLink {
+  id          String   @id @default(cuid())
+  machineId   String
+  machine     Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  title       String
+  url         String
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([machineId, createdAt])
+}
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  type        String   @default("static") // static | dynamic
+  query       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members     GroupMember[]
+  jobs        Job[]
+}
+
+model GroupMember {
+  id        String   @id @default(cuid())
+  groupId   String
+  machineId String
+  createdAt DateTime @default(now())
+
+  group   Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, machineId])
+  @@index([machineId])
+}
+
+model Job {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  command      String
+  mode         String   @default("parallel") // parallel | rolling
+  status       String   @default("PENDING")  // PENDING, RUNNING, SUCCESS, FAILED, ABORTED
+  targetType   String   @default("adhoc")    // adhoc | group | dynamic
+  groupId      String?
+  targetQuery  String?
+  strategy     String?
+  totalTargets Int      @default(0)
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  group       Group?          @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  executions  JobExecution[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model JobExecution {
+  id          String   @id @default(cuid())
+  jobId       String
+  machineId   String
+  status      String   @default("PENDING") // PENDING, RUNNING, SUCCESS, FAILED, SKIPPED, ABORTED
+  output      String?
+  exitCode    Int?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  job     Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([machineId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  machineId String?
+  userId    String?
+  action    String   // LOGIN, COMMAND_EXEC, SHELL_OPEN, SHELL_CLOSE, AGENT_EVENT, SESSION_CREATED, SESSION_ENDED, RATE_LIMIT_EXCEEDED
+  eventType String?  // For secure terminal events: SESSION_CREATED, SESSION_ENDED, RATE_LIMIT_EXCEEDED, REPLAY_DETECTED, HMAC_FAILED
+  details   String?  // JSON string with additional event data
+  severity  String   @default("info") // info, warn, critical
+  createdAt DateTime @default(now())
+
+  machine Machine? @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([machineId, createdAt])
+  @@index([action])
+  @@index([eventType])
+}
+
+model VMPackage {
+  id         String   @id @default(cuid())
+  machineId  String
+  name       String
+  version    String
+  manager    String?  // apt, yum, rpm, apk, etc.
+  status     String   @default("installed") // installed, update_available, security_update
+  cveIds     String?
+  lastSeen   DateTime @default(now())
+  scanId     String?
+
+  machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  scan    PackageScan? @relation(fields: [scanId], references: [id], onDelete: SetNull)
+
+  @@unique([machineId, name])
+  @@index([machineId, status])
+  @@index([machineId, lastSeen])
+}
+
+model PackageScan {
+  id          String      @id @default(cuid())
+  machineId   String
+  source      String      @default("agent")
+  summary     String?
+  createdAt   DateTime    @default(now())
+
+  machine     Machine     @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  packages    VMPackage[]
+
+  @@index([machineId, createdAt])
+}
+
+model SecurityPolicy {
+  id             String   @id @default(cuid())
+  name           String
+  targetPath     String
+  policyType     String   @default("config") // config, integrity
+  expectedHash   String?
+  expectedContent String?
+  intervalSeconds Int     @default(300)
+  severity       String   @default("medium") // low, medium, high, critical
+  mode           String   @default("observe") // observe, enforce, baseline
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  assignments PolicyAssignment[]
+  events      SecurityEvent[]
+
+  @@index([policyType])
+  @@index([targetPath])
+}
+
+model PolicyAssignment {
+  id         String   @id @default(cuid())
+  policyId   String
+  machineId  String
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  policy  SecurityPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  machine Machine        @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, machineId])
+  @@index([machineId])
+}
+
+model SecurityEvent {
+  id         String   @id @default(cuid())
+  machineId  String
+  policyId   String?
+  type       String   // drift, integrity, vulnerability, audit
+  severity   String   @default("medium")
+  message    String
+  data       String?
+  status     String   @default("open") // open, ack, resolved
+  resolvedAt DateTime?
+  resolvedBy String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  machine Machine        @relation(fields: [machineId], references: [id], onDelete: Cascade)
+  policy  SecurityPolicy? @relation(fields: [policyId], references: [id], onDelete: SetNull)
+
+  @@index([machineId, status])
+  @@index([machineId, createdAt])
+  @@index([policyId])
+}

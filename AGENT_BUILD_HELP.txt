@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# Maintainer Agent - Manual Deployment Guide
+
+echo "⚠️  Go ist auf diesem System nicht installiert"
+echo ""
+echo "Bitte führe einen der folgenden Schritte durch:"
+echo ""
+echo "Option 1: Installiere Go und baue den Agent"
+echo "  brew install go          # macOS"
+echo "  apt install golang-go    # Debian/Ubuntu"
+echo "  cd /Volumes/home-1/Maintainer/agent"
+echo "  ./build-agent.sh"
+echo ""
+echo "Option 2: Baue auf der VM direkt"
+echo "  ssh tim@192.168.10.XX"
+echo "  # Auf der VM:"
+echo "  sudo apt install golang-go"
+echo "  git clone <repo> oder kopiere die Dateien"
+echo "  cd agent"
+echo "  go build -o /usr/local/bin/maintainer-agent ."
+echo ""
+echo "Der Agent ist bereits auf der VM installiert und konfiguriert."
+echo "Er wartet nur auf das Binary unter: /usr/local/bin/maintainer-agent"
