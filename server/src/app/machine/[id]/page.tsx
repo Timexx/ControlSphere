@@ -278,6 +278,23 @@ export default function MachinePage() {
               setExecuting(null)
             }
           }
+
+          if (data.type === 'machine_heartbeat' && data.machineId === params.id) {
+            setMachine((prev) => {
+              if (!prev) return null
+              const lastSeen = data.timestamp || new Date().toISOString()
+              return {
+                ...prev,
+                status: 'online',
+                lastSeen
+              }
+            })
+
+            if (rebootingRef.current) {
+              setRebooting(false)
+              setLastSeenBeforeReboot(null)
+            }
+          }
           
           if (data.type === 'machine_metrics' && data.machineId === params.id) {
             // Check if this is first metrics after reboot - end rebooting state

@@ -94,6 +94,18 @@ export default function DashboardPage() {
                   m.id === data.machineId ? { ...m, status: data.status } : m
                 )
               )
+            } else if (data.type === 'machine_heartbeat') {
+              setMachines((prev) =>
+                prev.map((m) =>
+                  m.id === data.machineId
+                    ? {
+                        ...m,
+                        status: 'online',
+                        lastSeen: data.timestamp || new Date().toISOString(),
+                      }
+                    : m
+                )
+              )
             } else if (data.type === 'machine_metrics') {
               setMachines((prev) =>
                 prev.map((m) =>
@@ -235,11 +247,19 @@ function MachineCard({
   machine
 }: { machine: Machine }) {
   const t = useTranslations('dashboard')
+  const tMachine = useTranslations('machine')
   const locale = useLocale()
   const dateLocale = locale === 'de' ? de : enUS
   const isOnline = machine.status === 'online'
   const latestMetric = machine.metrics?.[0]
   const hasSecurityEvents = (machine.openSecurityEvents || 0) > 0
+  const lastSeenDate = new Date(machine.lastSeen)
+  const lastSeenText = Date.now() - lastSeenDate.getTime() <= 60_000
+    ? tMachine('status.live')
+    : formatDistanceToNow(lastSeenDate, {
+      addSuffix: true,
+      locale: dateLocale,
+    })
 
   let osInfo: any = {}
   try {
@@ -333,10 +353,7 @@ function MachineCard({
 
       <div className="relative px-6 py-3 bg-[#0c1219] border-t border-white/5 text-xs text-slate-400">
         {t('lastSeen')}{' '}
-        {formatDistanceToNow(new Date(machine.lastSeen), {
-          addSuffix: true,
-          locale: dateLocale,
-        })}
+        {lastSeenText}
       </div>
     </div>
   )
