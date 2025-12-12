@@ -6,6 +6,18 @@ import { realtimeEvents } from '@/lib/realtime-events'
 import { scanPackages } from '@/services/vulnerability-scanner'
 import { clearScanProgress } from '@/lib/scan-progress-store'
 
+const INTEGRITY_IGNORE_PATTERNS = [
+  /^\/var\/log\/.*/i,
+  /^\/var\/log\/journal\/.*/i,
+  /^\/var\/lib\/docker\/containers\/.*/i,
+  /^\/var\/cache\/apt\/.*/i,
+  /^\/var\/lib\/apt\/.*/i,
+  /^\/var\/lib\/dpkg\/.*/i,
+  /^\/var\/tmp\/.*/i,
+  /^\/root\/\.pm2\/logs\/.*/i
+]
+const INTEGRITY_COOLDOWN_MS = 15 * 60 * 1000 // 15 minutes
+
 function hashSecretKey(secret: string) {
   return crypto.createHash('sha256').update(secret).digest('hex')
 }
@@ -193,7 +205,8 @@ export async function POST(request: NextRequest) {
         type: true,
         message: true,
         data: true,
-        status: true
+        status: true,
+        updatedAt: true
       },
       orderBy: { createdAt: 'desc' }
     })
@@ -234,6 +247,11 @@ export async function POST(request: NextRequest) {
     }
 
     for (const finding of integrityFindings) {
+      const path = typeof finding.targetPath === 'string' ? finding.targetPath : undefined
+      if (path && INTEGRITY_IGNORE_PATTERNS.some((re) => re.test(path))) {
+        continue
+      }
+
       // Check if similar event already exists
       const existingEvent = existingOpenEvents.find(e => 
         e.type === 'integrity' && 
@@ -242,6 +260,10 @@ export async function POST(request: NextRequest) {
       )
       
       if (existingEvent) {
+        const withinCooldown =
+          existingEvent.updatedAt &&
+          Date.now() - new Date(existingEvent.updatedAt as any).getTime() < INTEGRITY_COOLDOWN_MS
+        if (withinCooldown) continue
         eventsToUpdate.push(existingEvent.id)
       } else {
         eventsToCreate.push({

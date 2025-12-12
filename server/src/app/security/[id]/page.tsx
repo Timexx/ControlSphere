@@ -757,6 +757,11 @@ export default function VMSecurityDetailPage() {
                 helper={locale === 'de' ? 'Abgeglichene CVEs gegen installierte Pakete.' : 'Matched CVEs against installed packages.'}
                 expanded={vulnerabilitiesExpanded}
                 onToggle={() => setVulnerabilitiesExpanded(!vulnerabilitiesExpanded)}
+                badge={vulnerabilities.length > 0 ? (
+                  <span className="ml-1 inline-flex items-center justify-center rounded-full bg-rose-600 text-white text-[10px] font-bold leading-none px-2 py-0.5">
+                    {vulnerabilities.length}
+                  </span>
+                ) : null}
                 actionButton={
                   vulnerabilities.length > 0 ? (
                     <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-slate-200 pointer-events-none">
@@ -825,6 +830,11 @@ export default function VMSecurityDetailPage() {
                 helper={t('tooltips.fileIntegrity')}
                 expanded={securityEventsExpanded}
                 onToggle={() => setSecurityEventsExpanded(!securityEventsExpanded)}
+                badge={meta.openEvents > 0 ? (
+                  <span className="ml-1 inline-flex items-center justify-center rounded-full bg-rose-600 text-white text-[10px] font-bold leading-none px-2 py-0.5">
+                    {meta.openEvents}
+                  </span>
+                ) : null}
                 actionButton={
                   <div className="flex items-center gap-2">
                     {meta.openEvents > 0 && (
@@ -889,6 +899,11 @@ export default function VMSecurityDetailPage() {
                 helper={t('tooltips.authMonitoring')}
                 expanded={auditLogsExpanded}
                 onToggle={() => setAuditLogsExpanded(!auditLogsExpanded)}
+                badge={auditLogs.length > 0 ? (
+                  <span className="ml-1 inline-flex items-center justify-center rounded-full bg-slate-600 text-white text-[10px] font-bold leading-none px-2 py-0.5">
+                    {auditLogs.length}
+                  </span>
+                ) : null}
               >
                 {auditLogs.length === 0 ? (
                   <EmptyHint
@@ -962,6 +977,15 @@ export default function VMSecurityDetailPage() {
           icon={<PackageSearch className="h-4 w-4" />}
           expanded={packagesExpanded}
           onToggle={() => setPackagesExpanded(!packagesExpanded)}
+          badge={
+            packages.length > 0 && packages.some((p) => p.status === 'update_available' || p.status === 'security_update')
+              ? (
+                <span className="ml-1 inline-flex items-center justify-center rounded-full bg-rose-600 text-white text-[10px] font-bold leading-none px-2 py-0.5">
+                  {packages.filter((p) => p.status === 'update_available' || p.status === 'security_update').length}
+                </span>
+              )
+              : null
+          }
         >
           {packageLoading ? (
             <div className="text-sm text-slate-400">{t('emptyStates.packages.hint')}</div>
@@ -1252,18 +1276,21 @@ function SectionCard({
   title,
   icon,
   children,
-  helper
+  helper,
+  badge
 }: {
   title: string
   icon: ReactNode
   children: ReactNode
   helper?: string
+  badge?: ReactNode
 }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-[#0A0F16]/80 p-4 space-y-3 shadow-[0_0_30px_rgba(0,243,255,0.06)]">
       <div className="flex items-center gap-2 text-sm text-slate-200">
         {icon}
         <span className="font-semibold">{title}</span>
+        {badge}
         {helper && (
           <div className="relative group">
             <Info className="h-3.5 w-3.5 text-cyan-300 cursor-help" />
@@ -1285,7 +1312,8 @@ function ExpandableSectionCard({
   helper,
   expanded,
   onToggle,
-  actionButton
+  actionButton,
+  badge
 }: {
   title: string
   icon: ReactNode
@@ -1294,6 +1322,7 @@ function ExpandableSectionCard({
   expanded: boolean
   onToggle: () => void
   actionButton?: ReactNode
+  badge?: ReactNode
 }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-[#0A0F16]/80 shadow-[0_0_30px_rgba(0,243,255,0.06)]">
@@ -1304,6 +1333,7 @@ function ExpandableSectionCard({
         <div className="flex items-center gap-2 text-sm text-slate-200">
           {icon}
           <span className="font-semibold">{title}</span>
+          {badge}
           {helper && (
             <div className="relative group">
               <Info className="h-3.5 w-3.5 text-cyan-300 cursor-help" />
