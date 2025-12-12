@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
+import { scanPackages } from '@/services/vulnerability-scanner'
+import { clearScanProgress } from '@/lib/scan-progress-store'
 
 function hashSecretKey(secret: string) {
   return crypto.createHash('sha256').update(secret).digest('hex')
@@ -42,6 +44,17 @@ export async function POST(request: NextRequest) {
     const configFindings = Array.isArray(body.configFindings) ? body.configFindings : []
     const integrityFindings = Array.isArray(body.integrityFindings) ? body.integrityFindings : []
     const extraEvents = Array.isArray(body.events) ? body.events : []
+    const reportedPathsRaw = Array.isArray(body.cveScanPaths)
+      ? body.cveScanPaths
+      : Array.isArray(body.scanPaths)
+        ? body.scanPaths
+        : Array.isArray(body.paths)
+          ? body.paths
+          : []
+    const reportedPaths = reportedPathsRaw
+      .filter((p: any) => typeof p === 'string')
+      .map((p: string) => p.trim())
+      .filter(Boolean)
     const providedSecret =
       request.headers.get('x-agent-secret') ||
       (typeof body.secretKey === 'string' ? body.secretKey : undefined)
@@ -63,7 +76,14 @@ export async function POST(request: NextRequest) {
           securityUpdates: packages.filter((p: any) => p?.status === 'security_update').length
         }
 
-    const summary = JSON.stringify(summaryObj)
+    const mergedSummary = {
+      ...summaryObj,
+      paths: Array.isArray(summaryObj?.paths)
+        ? summaryObj.paths.filter((p: any) => typeof p === 'string' && p.trim())
+        : reportedPaths
+    }
+
+    const summary = JSON.stringify(mergedSummary)
 
     const scan = await prisma.packageScan.create({
       data: {
@@ -134,6 +154,7 @@ export async function POST(request: NextRequest) {
     })
 
     const actualSummary = {
+      ...mergedSummary,
       total: actualPackageCount,
       updates: actualUpdates,
       securityUpdates: actualSecurityUpdates
@@ -144,6 +165,23 @@ export async function POST(request: NextRequest) {
       where: { id: scan.id },
       data: { summary: JSON.stringify(actualSummary) }
     })
+
+    const machinePackages = await prisma.vMPackage.findMany({
+      where: { machineId }
+    })
+
+    const vulnerabilityResult = await scanPackages(
+      machinePackages.map((pkg) => ({
+        id: pkg.id,
+        machineId: pkg.machineId,
+        name: pkg.name,
+        version: pkg.version,
+        manager: pkg.manager
+      }))
+    )
+
+    const criticalVulns = vulnerabilityResult.matches.filter((m) => m.severity === 'critical').length
+    const highVulns = vulnerabilityResult.matches.filter((m) => m.severity === 'high').length
 
     // Get ALL existing events for this machine (including resolved) to avoid duplicates
     const existingEvents = await prisma.securityEvent.findMany({
@@ -273,6 +311,41 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (criticalVulns + highVulns > 0) {
+      const eventSeverity = criticalVulns > 0 ? 'critical' : 'high'
+      const vulnMessage = `Detected ${criticalVulns} critical and ${highVulns} high vulnerabilities`
+      const existingVulnerabilityEvent = existingOpenEvents.find(
+        (e) => e.type === 'vulnerability'
+      )
+      const vulnerabilityData = JSON.stringify({
+        matches: vulnerabilityResult.matches.slice(0, 20),
+        critical: criticalVulns,
+        high: highVulns
+      })
+
+      if (existingVulnerabilityEvent) {
+        await prisma.securityEvent.update({
+          where: { id: existingVulnerabilityEvent.id },
+          data: {
+            severity: eventSeverity,
+            message: vulnMessage,
+            data: vulnerabilityData,
+            updatedAt: new Date()
+          }
+        })
+        eventsToUpdate.push(existingVulnerabilityEvent.id)
+      } else {
+        eventsToCreate.push({
+          machineId,
+          policyId: null,
+          type: 'vulnerability',
+          severity: eventSeverity,
+          message: vulnMessage,
+          data: vulnerabilityData
+        })
+      }
+    }
+
     // Update timestamps of existing events that were re-detected
     if (eventsToUpdate.length > 0) {
       await prisma.securityEvent.updateMany({
@@ -302,12 +375,17 @@ export async function POST(request: NextRequest) {
 
     // Emit scan completed event for real-time update
     realtimeEvents.emitScanCompleted(machineId, scan.id, actualSummary)
+    clearScanProgress(machineId)
+    await prisma.scanProgressState.deleteMany({ where: { machineId } })
 
     return NextResponse.json({
       scanId: scan.id,
       packagesProcessed: packages.length,
       packagesInDatabase: actualSummary.total,
       eventsRecorded: eventsToCreate.length,
+      vulnerabilitiesDetected: vulnerabilityResult.matches.length,
+      criticalVulnerabilities: criticalVulns,
+      highVulnerabilities: highVulns,
       summary: actualSummary
     })
   } catch (error) {

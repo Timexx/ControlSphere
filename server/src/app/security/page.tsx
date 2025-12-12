@@ -30,6 +30,14 @@ export default function SecurityOverviewPage() {
   const [items, setItems] = useState<OverviewItem[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [cveState, setCveState] = useState<{ status: string; lastSync: string | null; error?: string | null; mode?: string; ecosystems?: string[]; totalCves?: number | null }>({ status: 'idle', lastSync: null })
+  const [syncing, setSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [cveDialogOpen, setCveDialogOpen] = useState(false)
+  const [cveList, setCveList] = useState<any[]>([])
+  const [cveListLoading, setCveListLoading] = useState(false)
+  const [cveSearch, setCveSearch] = useState('')
+  const [cveSeverityFilter, setCveSeverityFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all')
 
   const loadData = async () => {
     try {
@@ -43,12 +51,84 @@ export default function SecurityOverviewPage() {
     }
   }
 
+  const loadCveState = async () => {
+    try {
+      const res = await fetch('/api/security/cve', { cache: 'no-store' })
+      const data = await res.json()
+      setCveState({
+        status: data.status ?? 'idle',
+        lastSync: data.lastSync ?? null,
+        error: data.error ?? null,
+        mode: data.mode ?? 'full',
+        ecosystems: data.ecosystems ?? [],
+        totalCves: data.totalCves ?? null
+      })
+    } catch (error) {
+      console.error('Failed to fetch CVE mirror state', error)
+    }
+  }
+
+  const triggerCveSync = async () => {
+    setSyncing(true)
+    setSyncMessage(null)
+    try {
+      const res = await fetch('/api/security/cve', { method: 'POST' })
+      const data = await res.json()
+      setCveState({
+        status: data.status ?? 'idle',
+        lastSync: data.lastSync ?? null,
+        error: data.error ?? null,
+        mode: data.mode ?? 'full',
+        ecosystems: data.ecosystems ?? [],
+        totalCves: data.totalCves ?? null
+      })
+      setSyncMessage(data.accepted ? t('cveSync.status.started') : t('cveSync.status.alreadyRunning'))
+    } catch (error) {
+      console.error('Failed to trigger CVE sync', error)
+      setSyncMessage(t('cveSync.status.failed'))
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const loadCveList = async () => {
+    setCveListLoading(true)
+    try {
+      const res = await fetch('/api/security/cve/list', { cache: 'no-store' })
+      const data = await res.json()
+      setCveList(data.items || [])
+    } catch (error) {
+      console.error('Failed to fetch CVE list', error)
+      setCveList([])
+    } finally {
+      setCveListLoading(false)
+    }
+  }
+
+  const filteredCves = useMemo(() => {
+    const term = cveSearch.trim().toLowerCase()
+    return cveList.filter((item) => {
+      const matchesTerm = term
+        ? item.id?.toLowerCase().includes(term) ||
+          item.description?.toLowerCase().includes(term)
+        : true
+      const severity = (item.severity || '').toLowerCase()
+      const matchesSeverity = cveSeverityFilter === 'all' || severity === cveSeverityFilter
+      return matchesTerm && matchesSeverity
+    })
+  }, [cveList, cveSearch, cveSeverityFilter])
+
   useEffect(() => {
     loadData()
+    loadCveState()
     
     // Auto-refresh every 30 seconds to keep timestamps current
     const interval = setInterval(loadData, 30000)
-    return () => clearInterval(interval)
+    const cveInterval = setInterval(loadCveState, 60000)
+    return () => {
+      clearInterval(interval)
+      clearInterval(cveInterval)
+    }
   }, [])
 
   return (
@@ -85,6 +165,64 @@ export default function SecurityOverviewPage() {
           </div>
         </div>
 
+        <div className="rounded-xl border border-slate-800 bg-[#0B1118]/70 p-4 shadow-[0_0_30px_rgba(0,243,255,0.06)]">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="space-y-1">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400 font-mono">
+                {t('cveSync.eyebrow')}
+              </div>
+              <div className="text-white font-semibold text-lg">{t('cveSync.title')}</div>
+              <p className="text-sm text-slate-300">
+                {t('cveSync.subtitle')}
+              </p>
+              <p className="text-xs text-slate-400">
+                {t('cveSync.automatic')}
+              </p>
+              <p className="text-xs text-slate-400">
+                {t('cveSync.manual')}
+              </p>
+              <p className="text-xs text-slate-400">
+                {t('cveSync.mode', { mode: cveState.mode === 'scoped' ? 'scoped' : 'full' })}
+              </p>
+              <p className="text-xs text-slate-400">
+                {t('cveSync.coverage', {
+                  count: cveState.ecosystems?.length ?? 0,
+                  total: cveState.totalCves ?? '—'
+                })}
+              </p>
+            </div>
+            <div className="flex flex-col items-start md:items-end gap-2 min-w-[240px]">
+              <div className="text-xs text-slate-300">
+                {t('cveSync.state', {
+                  status: cveState.status,
+                  lastSync: cveState.lastSync ? formatDistanceToNow(new Date(cveState.lastSync), { addSuffix: true, locale: dateLocale }) : t('cveSync.stateUnknown')
+                })}
+              </div>
+              {cveState.error && (
+                <div className="text-xs text-rose-300">{cveState.error}</div>
+              )}
+              {syncMessage && (
+                <div className="text-xs text-cyan-300">{syncMessage}</div>
+              )}
+              <button
+                onClick={triggerCveSync}
+                disabled={syncing}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 h-10 rounded-lg border border-cyan-500/50 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors disabled:opacity-60"
+              >
+                <ShieldAlert className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
+                <span>{syncing ? t('cveSync.buttonLoading') : t('cveSync.button')}</span>
+              </button>
+              <button
+                onClick={() => { setCveDialogOpen(true); loadCveList() }}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 h-10 rounded-lg border border-slate-700 bg-[#0d141d] text-slate-200 hover:border-cyan-500/60 transition-colors"
+              >
+                <ShieldAlert className="h-4 w-4" />
+                <span>{t('cveSync.viewMirror')}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         {loading ? (
           <div className="text-slate-400 text-sm">{t('states.loading')}</div>
         ) : items.length === 0 ? (
@@ -101,8 +239,114 @@ export default function SecurityOverviewPage() {
       {showAddModal && (
         <AddAgentModal onClose={() => setShowAddModal(false)} />
       )}
+
+      {cveDialogOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0A0F16] border border-slate-700 rounded-xl max-w-5xl w-full max-h-[80vh] overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div className="flex items-center gap-2 text-cyan-200">
+                <ShieldAlert className="h-5 w-5" />
+                <div>
+                  <h2 className="text-lg font-semibold">{t('cveDialog.title')}</h2>
+                  <p className="text-xs text-slate-400">{t('cveDialog.subtitle')}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCveDialogOpen(false)}
+                className="h-8 w-8 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors flex items-center justify-center"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-4 overflow-auto max-h-[calc(80vh-4rem)]">
+              {cveListLoading ? (
+                <div className="text-sm text-slate-300">{t('cveDialog.loading')}</div>
+              ) : cveList.length === 0 ? (
+                <div className="text-sm text-slate-300">{t('cveDialog.empty')}</div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-2 w-full md:w-auto">
+                      <input
+                        value={cveSearch}
+                        onChange={(e) => setCveSearch(e.target.value)}
+                        placeholder={t('cveDialog.searchPlaceholder')}
+                        className="w-full md:w-72 rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500 focus:outline-none"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-slate-400">{t('cveDialog.filterSeverity')}</label>
+                      <select
+                        value={cveSeverityFilter}
+                        onChange={(e) => setCveSeverityFilter(e.target.value as any)}
+                        className="rounded-lg border border-slate-700 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-500 focus:outline-none"
+                      >
+                        <option value="all">{t('cveDialog.filterAll')}</option>
+                        <option value="critical">{t('severity.critical')}</option>
+                        <option value="high">{t('severity.high')}</option>
+                        <option value="medium">{t('severity.medium')}</option>
+                        <option value="low">{t('severity.low')}</option>
+                      </select>
+                    </div>
+                  </div>
+                  {filteredCves.length === 0 ? (
+                    <div className="text-sm text-slate-400">{t('cveDialog.noResults')}</div>
+                  ) : (
+                    filteredCves.map((item) => (
+                    <div key={item.id} className="rounded-lg border border-slate-800 bg-[#0C121A]/70 p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <a
+                          href={getCveLink(item.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sm font-semibold text-cyan-200 hover:text-cyan-50"
+                        >
+                          {item.id}
+                        </a>
+                        <span className={`text-[11px] uppercase tracking-[0.2em] px-2 py-1 rounded-full border ${
+                          item.severity?.toLowerCase() === 'critical' ? 'border-rose-500/60 text-rose-200 bg-rose-500/10' :
+                          item.severity?.toLowerCase() === 'high' ? 'border-amber-500/60 text-amber-200 bg-amber-500/10' :
+                          item.severity?.toLowerCase() === 'medium' ? 'border-yellow-500/60 text-yellow-200 bg-yellow-500/10' :
+                          'border-slate-700 text-slate-200 bg-slate-800/60'
+                        }`}>
+                          {item.severity || 'unknown'}
+                        </span>
+                      </div>
+                      <div className="text-xs text-slate-300 flex flex-wrap items-center gap-2 mt-1">
+                        {item.score != null && (
+                          <span className="px-2 py-0.5 rounded border border-slate-700 text-[11px] text-slate-100">
+                            CVSS {Number(item.score).toFixed(1)}
+                          </span>
+                        )}
+                        {item.publishedAt && (
+                          <span className="text-slate-400">
+                            {new Date(item.publishedAt).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      {item.description && (
+                        <p className="text-xs text-slate-400 mt-2 leading-relaxed line-clamp-3">
+                          {item.description}
+                        </p>
+                      )}
+                    </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   )
+}
+
+function getCveLink(id: string) {
+  if (!id) return '#'
+  return id.toUpperCase().startsWith('CVE-')
+    ? `https://nvd.nist.gov/vuln/detail/${id}`
+    : `https://osv.dev/vulnerability/${id}`
 }
 
 function SecurityCard({ item, t, dateLocale }: { item: OverviewItem; t: ReturnType<typeof useTranslations>; dateLocale: Locale }) {

@@ -74,6 +74,12 @@ const messages = {
     saving: 'Einstellung wird gespeichert...',
     footnote: 'Du kannst dies später im Profil ändern.',
   },
+  severity: {
+    critical: 'Kritisch',
+    high: 'Hoch',
+    medium: 'Mittel',
+    low: 'Niedrig'
+  },
   appShell: {
     nav: {
       dashboard: 'System Übersicht',
@@ -427,6 +433,12 @@ const messages = {
     }
   },
   security: {
+    severity: {
+      critical: 'Kritisch',
+      high: 'Hoch',
+      medium: 'Mittel',
+      low: 'Niedrig'
+    },
     header: {
       eyebrow: 'Security Center',
       title: 'VM Security Übersicht',
@@ -440,6 +452,36 @@ const messages = {
     states: {
       loading: 'Lade Sicherheitsstatus...',
       empty: 'Keine Systeme gefunden.'
+    },
+    cveSync: {
+      eyebrow: 'CVE Mirror',
+      title: 'CVE Sync & Matching',
+      subtitle: 'Nutzt OSV-Daten und erkannte Paket-Ökosysteme, um Schwachstellen aktuell zu halten.',
+      automatic: 'Automatischer Trigger: alle 2 Stunden nach Serverstart (auf erkannte Paket-Ökosysteme begrenzt).',
+      manual: 'Manueller Trigger: sofortiges Sync anstoßen, um CVE-Daten jetzt zu aktualisieren.',
+      button: 'CVE-Sync jetzt starten',
+      buttonLoading: 'Sync läuft...',
+      state: 'Status: {status} • Letzter Sync: {lastSync}',
+      stateUnknown: 'unbekannt',
+      status: {
+        started: 'Manueller CVE-Sync gestartet.',
+        alreadyRunning: 'Ein CVE-Sync läuft bereits.',
+        failed: 'CVE-Sync konnte nicht gestartet werden.'
+      },
+      viewMirror: 'CVE-Mirror ansehen',
+      mode: 'Modus: {mode}',
+      coverage: 'Ökosysteme: {count} • CVEs: {total}'
+    },
+    cveDialog: {
+      title: 'CVE Mirror',
+      subtitle: 'Neueste gespiegelte CVEs mit Quellen und Veröffentlichungsdatum.',
+      loading: 'Lade CVEs...',
+      empty: 'Noch keine CVEs gespiegelt.',
+      published: 'Veröffentlicht: {date}',
+      searchPlaceholder: 'Suche nach ID oder Beschreibung',
+      filterSeverity: 'Schweregrad',
+      filterAll: 'Alle',
+      noResults: 'Keine CVEs passen zu deinen Filtern.'
     },
     cards: {
       status: {
@@ -470,7 +512,8 @@ const messages = {
       auditLogs: 'Audit Logs',
       packages: 'Pakete',
       ports: 'Ports',
-      handbook: 'So funktionieren Scans'
+      handbook: 'So funktionieren Scans',
+      scanReport: 'Scan-Report'
     },
     emptyStates: {
       events: {
@@ -489,6 +532,24 @@ const messages = {
         hint: 'Keine Ports erkannt',
         detail: 'Es konnten keine offenen Ports auf diesem System erkannt werden.'
       }
+    },
+    liveScan: {
+      running: 'Scan läuft...',
+      eta: 'Verbleibend: {seconds}s'
+    },
+    scanButton: {
+      disabled: 'Aktiver Scan läuft – bitte auf Abschluss warten.'
+    },
+    cveDialog: {
+      title: 'CVE Mirror',
+      subtitle: 'Neueste gespiegelte CVEs mit Quellen und Veröffentlichungsdatum.',
+      loading: 'Lade CVEs...',
+      empty: 'Noch keine CVEs gespiegelt.',
+      published: 'Veröffentlicht: {date}',
+      searchPlaceholder: 'Suche nach ID oder Beschreibung',
+      filterSeverity: 'Schweregrad',
+      filterAll: 'Alle',
+      noResults: 'Keine CVEs passen zu deinen Filtern.'
     },
     buttons: {
       download: 'Herunterladen',
@@ -510,7 +571,9 @@ const messages = {
       version: 'Version',
       manager: 'Paketmanager',
       status: 'Status',
-      command: 'Befehl'
+      command: 'Befehl',
+      pathsScanned: 'Verzeichnisse, die auf CVEs geprüft wurden',
+      pathsScannedEmpty: 'Keine Scan-Pfade vom Agent gemeldet.'
     },
     severity: {
       critical: 'Kritisch',
@@ -574,6 +637,23 @@ const messages = {
           title: 'Scan-Intervall',
           description: 'Alle Security-Checks werden automatisch vom Agent durchgeführt. Der erste Scan startet kurz nach der Agent-Verbindung.',
           interval: 'alle 30 Minuten'
+        },
+        cveSync: {
+          title: '4. CVE Sync & Matching',
+          description: 'Der Server spiegelt CVE/OSV-Daten und gleicht sie mit installierten Paketen ab.',
+          automatic: 'Automatischer Trigger: alle 2 Stunden nach Serverstart (OSV-Batch, begrenzt auf erkannte Ökosysteme).',
+          manual: 'Manueller Trigger: Security → "CVE-Sync jetzt starten" stößt einen sofortigen Mirror an.',
+          apiHint: 'API: POST /api/security/cve (Status: GET /api/security/cve)'
+        },
+        cveCoverage: {
+          title: '5. CVE-Abdeckung sicherstellen',
+          description: 'So stellen Agent und Server sicher, dass alle CVEs über Subsysteme geprüft werden.',
+          bullets: {
+            serverMirror: 'Server spiegelt OSV-CVEs täglich (Debian, Alpine, npm, PyPI, Maven, NuGet, Go, crates.io, Packagist, RubyGems, OSS-Fuzz).',
+            agentPaths: 'Agent sendet installierte Pakete und optionale Scan-Pfade (Verzeichnisse, die auf verwundbare Binaries/Pakete geprüft wurden).',
+            serverMatching: 'Server führt das CVE-Matching zentral mit dem gespiegelten Datensatz und ecosystem-bewusster Versionslogik aus.',
+            operatorChecks: 'Operatoren sehen „Verzeichnisse, die auf CVEs geprüft wurden“ im Scan-Report und können CVE-Sync via POST /api/security/cve neu anstoßen.'
+          }
         }
       }
     },

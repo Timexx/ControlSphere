@@ -13,6 +13,7 @@ import { WebClientConnectionManager } from './connection/WebClientConnectionMana
 import { SecureRemoteTerminalService } from './domain/services/SecureRemoteTerminalService'
 import { orchestrator } from './lib/orchestrator'
 import { SecretEncryptionService } from './infrastructure/crypto/SecretEncryptionService'
+import { startCveMirrorService } from './services/cve-mirror'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = process.env.HOSTNAME || '0.0.0.0'
@@ -57,6 +58,7 @@ async function bootstrap(): Promise<void> {
 
   const httpServer = new HttpServer(serverConfig, (req, res) => handler(req, res), logger)
   await httpServer.start()
+  startCveMirrorService(undefined, prisma)
 
   // Initialize SecureRemoteTerminalService
   // Configuration via environment variables:

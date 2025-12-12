@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Server, Layers, Plus, LogOut, ShieldCheck, Menu, X, TerminalSquare } from 'lucide-react'
+import { Server, Layers, Plus, LogOut, ShieldCheck, ShieldAlert, Menu, X, TerminalSquare } from 'lucide-react'
 import { type ReactNode, useState, useEffect, useRef, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { useTranslations } from 'next-intl'
@@ -26,6 +26,7 @@ export default function AppShell({
   const t = useTranslations('appShell')
   const pathname = usePathname()
   const [isNavOpen, setIsNavOpen] = useState(false)
+  const [vulnSummary, setVulnSummary] = useState<{ critical: number; high: number; affectedMachines: number } | null>(null)
   const [remainingTime, setRemainingTime] = useState<number | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [showExpiryDialog, setShowExpiryDialog] = useState(false)
@@ -68,6 +69,21 @@ export default function AppShell({
     }
   }, [])
 
+  const fetchVulnSummary = useCallback(async () => {
+    try {
+      const res = await fetch('/api/security/vulnerabilities', { cache: 'no-store' })
+      if (!res.ok) return
+      const data = await res.json()
+      setVulnSummary({
+        critical: data.critical ?? 0,
+        high: data.high ?? 0,
+        affectedMachines: data.affectedMachines ?? 0
+      })
+    } catch (error) {
+      console.error('Failed to fetch vulnerability summary:', error)
+    }
+  }, [])
+
   const handleInternalLogout = async () => {
     if (internalLoggingOut) return
     
@@ -101,6 +117,12 @@ export default function AppShell({
       window.removeEventListener('session-renewed', handleSessionRenewed)
     }
   }, [updateRemainingTime])
+
+  useEffect(() => {
+    fetchVulnSummary()
+    const interval = setInterval(fetchVulnSummary, 45000)
+    return () => clearInterval(interval)
+  }, [fetchVulnSummary])
 
   const handleRefreshSession = async () => {
     if (refreshing) return
@@ -169,6 +191,35 @@ export default function AppShell({
               <Plus className="h-4 w-4" />
               <span>{t('actions.addAgent')}</span>
             </button>
+            <Link
+              href="/security"
+              className={cn(
+                "inline-flex h-10 items-center gap-3 px-4 rounded-lg border transition-all min-w-[180px]",
+                (vulnSummary?.critical ?? 0) > 0
+                  ? "border-rose-500/60 bg-rose-500/10 text-rose-50 shadow-[0_0_18px_rgba(244,63,94,0.35)]"
+                  : "border-slate-700 bg-slate-800/60 text-slate-100 hover:border-cyan-500/60 hover:text-white"
+              )}
+              title="Open vulnerabilities"
+            >
+              <div className="relative h-8 w-8 rounded-md border border-current/50 bg-black/30 flex items-center justify-center">
+                <ShieldAlert className="h-4 w-4" />
+                {(vulnSummary?.critical ?? 0) > 0 && (
+                  <span className="absolute -top-1 -right-1 h-5 min-w-[20px] px-1 rounded-full bg-rose-600 text-[11px] font-semibold text-white flex items-center justify-center leading-none">
+                    {vulnSummary?.critical ?? 0}
+                  </span>
+                )}
+              </div>
+              <div className="leading-tight text-left">
+                <div className="text-[11px] uppercase tracking-[0.14em] text-slate-300">
+                  {t('nav.security')}
+                </div>
+                <div className="text-xs text-slate-200">
+                  {vulnSummary
+                    ? `${vulnSummary.critical} critical${(vulnSummary.high ?? 0) > 0 ? ` • ${vulnSummary.high} high` : ''}`
+                    : '...'}
+                </div>
+              </div>
+            </Link>
             {remainingTime !== null && (
               <div className="relative">
                 <button

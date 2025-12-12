@@ -26,6 +26,13 @@ class RealtimeEventBusImpl extends EventEmitter {
     })
   }
 
+  emitScanProgress(machineId, progress) {
+    this.emit('scan_progress', {
+      machineId,
+      progress
+    })
+  }
+
   emitSecurityEventsResolved(machineId, resolvedCount) {
     this.emit('security_events_resolved', {
       machineId,

@@ -134,6 +134,13 @@ export class AgentConnectionManager {
         timestamp: data.timestamp
       })
     })
+    realtimeEvents.on('scan_progress', (data: any) => {
+      this.broadcast({
+        type: 'scan_progress',
+        machineId: data.machineId,
+        progress: data.progress
+      })
+    })
     realtimeEvents.on('security_events_resolved', (data: any) => {
       this.broadcast({
         type: 'security_events_resolved',

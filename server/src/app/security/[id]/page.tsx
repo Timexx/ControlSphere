@@ -63,6 +63,29 @@ type PortEntry = {
   lastSeen: string
 }
 
+type VulnerabilityRow = {
+  id: string
+  cveId: string
+  severity: string
+  description?: string | null
+  packageName: string
+  packageVersion: string
+  score?: number | null
+  createdAt: string
+}
+
+function parseScanSummary(summary: any) {
+  if (!summary) return null
+  if (typeof summary === 'string') {
+    try {
+      return JSON.parse(summary)
+    } catch {
+      return summary
+    }
+  }
+  return summary
+}
+
 // Handbook data - static content
 const HANDBOOK_DATA = {
   fileIntegrity: [
@@ -89,7 +112,8 @@ const HANDBOOK_DATA = {
   logFiles: [
     '/var/log/auth.log (Debian/Ubuntu)',
     '/var/log/secure (RHEL/CentOS)'
-  ]
+  ],
+  cveCoverageBullets: ['serverMirror', 'agentPaths', 'serverMatching', 'operatorChecks']
 }
 
 export default function VMSecurityDetailPage() {
@@ -106,15 +130,22 @@ export default function VMSecurityDetailPage() {
   const [packageQuery, setPackageQuery] = useState('')
   const [ports, setPorts] = useState<PortEntry[]>([])
   const [portsExpanded, setPortsExpanded] = useState(false)
-  const [meta, setMeta] = useState<{ openEvents: number; lastScan?: string | null; hostname?: string }>({ openEvents: 0 })
+  const [vulnerabilities, setVulnerabilities] = useState<VulnerabilityRow[]>([])
+  const [vulnerabilitiesExpanded, setVulnerabilitiesExpanded] = useState(true)
+  const [scanProgress, setScanProgress] = useState<{ progress: number; phase: string; etaSeconds: number | null; startedAt: string | null } | null>(null)
+  const [scanReportExpanded, setScanReportExpanded] = useState(false)
+  const [meta, setMeta] = useState<{ openEvents: number; lastScan?: string | null; hostname?: string; lastScanSummary?: any }>({ openEvents: 0 })
   const [securityEventsExpanded, setSecurityEventsExpanded] = useState(false)
   const [auditLogsExpanded, setAuditLogsExpanded] = useState(false)
+  const [packagesExpanded, setPackagesExpanded] = useState(false)
   const [showHandbook, setShowHandbook] = useState(false)
   const [scanTriggering, setScanTriggering] = useState(false)
+  const [scanFallbackStart, setScanFallbackStart] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
   const [showAddModal, setShowAddModal] = useState(false)
   const [, forceUpdate] = useState(0) // For timestamp refresh
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; tone: 'success' | 'error' | 'info' }>>([])
+  const [etaCountdown, setEtaCountdown] = useState<number | null>(null)
 
   // Auto-refresh timestamp display every 30 seconds
   useEffect(() => {
@@ -123,6 +154,27 @@ export default function VMSecurityDetailPage() {
     }, 30000)
     return () => clearInterval(interval)
   }, [])
+
+  // Countdown for ETA while scan is running
+  useEffect(() => {
+    if (scanProgress?.etaSeconds != null) {
+      setEtaCountdown(scanProgress.etaSeconds)
+      setScanFallbackStart(null)
+    } else {
+      setEtaCountdown(null)
+    }
+  }, [scanProgress?.etaSeconds, scanProgress?.startedAt])
+
+  useEffect(() => {
+    if (etaCountdown === null) return
+    const tick = setInterval(() => {
+      setEtaCountdown((prev) => {
+        if (prev === null) return null
+        return prev > 0 ? prev - 1 : 0
+      })
+    }, 1000)
+    return () => clearInterval(tick)
+  }, [etaCountdown])
 
   const pushToast = useCallback((message: string, tone: 'success' | 'error' | 'info' = 'info') => {
     const id = Date.now() + Math.random()
@@ -146,8 +198,8 @@ export default function VMSecurityDetailPage() {
 
     try {
       const [securityRes, packagesRes] = await Promise.all([
-        fetch(`/api/vms/${machineId}/security`),
-        fetch(`/api/vms/${machineId}/packages`)
+        fetch(`/api/vms/${machineId}/security`, { cache: 'no-store' }),
+        fetch(`/api/vms/${machineId}/packages`, { cache: 'no-store' })
       ])
 
       let securityData: any = null
@@ -169,13 +221,39 @@ export default function VMSecurityDetailPage() {
         setEvents(securityData.events || [])
         setAuditLogs(securityData.auditLogs || [])
         setPorts(securityData.ports || [])
+        setVulnerabilities(
+          (securityData.vulnerabilities || []).map((vuln: any) => ({
+            id: vuln.id,
+            cveId: vuln.cve?.id || vuln.cveId || 'unknown',
+            severity: (vuln.cve?.severity || vuln.severity || 'unknown').toLowerCase(),
+            description: vuln.cve?.description || vuln.description || null,
+            packageName: vuln.package?.name || vuln.packageName || 'unknown package',
+            packageVersion: vuln.package?.version || vuln.packageVersion || '',
+            score: vuln.cve?.score ?? vuln.score ?? null,
+            createdAt: vuln.createdAt
+          }))
+        )
         setMeta({
           openEvents: securityData.openEvents || 0,
           lastScan: securityData.lastScan?.createdAt || null,
+          lastScanSummary: parseScanSummary(securityData.lastScan?.summary),
           hostname: securityData.machine?.hostname
         })
+        if (securityData.scanProgress) {
+          setScanProgress({
+            progress: securityData.scanProgress.progress ?? 0,
+            phase: securityData.scanProgress.phase ?? 'running',
+            etaSeconds: securityData.scanProgress.etaSeconds ?? null,
+            startedAt: securityData.scanProgress.startedAt ?? null
+          })
+          setScanFallbackStart(null)
+        } else {
+          setScanProgress(null)
+          setScanFallbackStart(null)
+        }
       } else {
         console.error('Failed to fetch security detail', securityData?.error)
+        setVulnerabilities([])
       }
 
       if (packagesRes.ok && packagesData) {
@@ -254,9 +332,21 @@ export default function VMSecurityDetailPage() {
                 ...prev,
                 lastScan: data.timestamp || new Date().toISOString()
               }))
+              setScanProgress(null)
+              setScanFallbackStart(null)
               pushToast(t('toasts.scanCompleted'), 'success')
               refreshAllData()
               setScanTriggering(false) // Stop animation when scan is complete
+            }
+
+            if (data.type === 'scan_progress' && data.machineId === machineId && data.progress) {
+              setScanProgress({
+                progress: data.progress.progress ?? 0,
+                phase: data.progress.phase ?? 'running',
+                etaSeconds: data.progress.etaSeconds ?? null,
+                startedAt: data.progress.startedAt ?? null
+              })
+              setScanFallbackStart(null)
             }
 
             if (data.type === 'security_events_resolved' && data.machineId === machineId) {
@@ -293,13 +383,23 @@ export default function VMSecurityDetailPage() {
   const highestSeverity = useMemo(() => {
     const order = ['info', 'low', 'medium', 'high', 'critical']
     let current = 'info'
-    for (const evt of events) {
-      if (order.indexOf(evt.severity) > order.indexOf(current)) {
-        current = evt.severity
+    const consider = (severity: string) => {
+      const normalized = severity?.toLowerCase?.() || 'info'
+      if (order.indexOf(normalized) > order.indexOf(current)) {
+        current = normalized
       }
     }
+    for (const evt of events) consider(evt.severity)
+    for (const vuln of vulnerabilities) consider(vuln.severity)
     return current
-  }, [events])
+  }, [events, vulnerabilities])
+
+  const vulnerabilityCounts = useMemo(() => {
+    const critical = vulnerabilities.filter((v) => v.severity === 'critical').length
+    const high = vulnerabilities.filter((v) => v.severity === 'high').length
+    const medium = vulnerabilities.filter((v) => v.severity === 'medium').length
+    return { critical, high, medium, total: vulnerabilities.length }
+  }, [vulnerabilities])
 
   const downloadPackagesCSV = () => {
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19)
@@ -330,9 +430,10 @@ export default function VMSecurityDetailPage() {
   }
 
   const triggerSecurityScan = async () => {
-    if (!machineId || scanTriggering) return
+    if (!machineId || scanTriggering || scanProgress) return
     
     setScanTriggering(true)
+    setScanFallbackStart(new Date().toISOString())
     
     try {
       // Step 1: Call API endpoint to validate and create audit log
@@ -487,6 +588,19 @@ export default function VMSecurityDetailPage() {
       : `Security scans are run automatically by the agent every 30 minutes. Next scan in ${minutesUntilNext} minute${minutesUntilNext !== 1 ? 's' : ''}.`
   }, [nextScanTime, locale, t])
 
+  const bannerProgress = useMemo(() => {
+    if (scanProgress) return scanProgress
+    if (scanTriggering && scanFallbackStart) {
+      return {
+        progress: 1,
+        phase: 'starting',
+        etaSeconds: null,
+        startedAt: scanFallbackStart
+      }
+    }
+    return null
+  }, [scanProgress, scanTriggering, scanFallbackStart])
+
   return (
     <AppShell
       onAddAgent={() => setShowAddModal(true)}
@@ -567,11 +681,144 @@ export default function VMSecurityDetailPage() {
           </div>
         </div>
 
+        {bannerProgress && (
+          <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/5 p-4 shadow-[0_0_25px_rgba(34,211,238,0.15)]">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-cyan-100">
+                <ShieldAlert className="h-4 w-4" />
+                <span className="text-sm font-semibold">{t('handbook.sections.scanInterval.title')}</span>
+                <span className="text-xs uppercase tracking-[0.16em] px-2 py-1 rounded-full border border-cyan-400/40 bg-cyan-400/10">
+                  {bannerProgress.phase}
+                </span>
+              </div>
+              <div className="text-xs text-slate-200">
+                {etaCountdown !== null
+                  ? t('liveScan.eta', { seconds: etaCountdown })
+                  : t('liveScan.running')}
+              </div>
+            </div>
+            <div className="mt-3 h-2 rounded-full bg-slate-800 overflow-hidden">
+              <div
+                className="h-full bg-cyan-400 transition-all"
+                style={{ width: `${Math.min(100, Math.max(0, bannerProgress.progress || 0))}%` }}
+              />
+            </div>
+          </div>
+        )}
+
         {loading ? (
           <div className="text-slate-400 text-sm">{t('emptyStates.events.hint')}</div>
         ) : (
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
             <div className="xl:col-span-2 space-y-4">
+              <ExpandableSectionCard
+                title={t('sections.scanReport')}
+                icon={<ActivitySquare className="h-4 w-4" />}
+                helper={meta.lastScan ? t('labels.timestamp') : t('emptyStates.events.detail')}
+                expanded={scanReportExpanded}
+                onToggle={() => setScanReportExpanded(!scanReportExpanded)}
+              >
+                {meta.lastScan ? (
+                  <div className="space-y-3 text-sm text-slate-200">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-300">{t('sections.scanReport')}</span>
+                      <span className="text-xs text-slate-400">
+                        {formatDistanceToNow(new Date(meta.lastScan), { locale: dateLocale })} ago
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <SummaryTile label={t('labels.package')} value={meta.lastScanSummary?.total ?? '—'} />
+                      <SummaryTile label={t('packageStatus.updateAvailable')} value={meta.lastScanSummary?.updates ?? '—'} />
+                      <SummaryTile label={t('packageStatus.securityUpdate')} value={meta.lastScanSummary?.securityUpdates ?? '—'} />
+                    </div>
+                    <div className="rounded-lg border border-slate-800 bg-[#0C121A]/60 p-3 space-y-2">
+                      <div className="text-xs uppercase tracking-[0.16em] text-slate-400">
+                        {t('labels.pathsScanned')}
+                      </div>
+                      {Array.isArray(meta.lastScanSummary?.paths) && meta.lastScanSummary.paths.length > 0 ? (
+                        <ul className="text-xs text-slate-200 space-y-1">
+                          {meta.lastScanSummary.paths.map((p: string) => (
+                            <li key={p} className="truncate">• {p}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="text-xs text-slate-400">{t('labels.pathsScannedEmpty')}</div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <EmptyHint text={t('emptyStates.packages.hint')} detail={t('emptyStates.packages.detail')} />
+                )}
+              </ExpandableSectionCard>
+
+              <ExpandableSectionCard
+                title={`${locale === 'de' ? 'Schwachstellen' : 'Vulnerabilities'} (${vulnerabilities.length})`}
+                icon={<ShieldAlert className="h-4 w-4" />}
+                helper={locale === 'de' ? 'Abgeglichene CVEs gegen installierte Pakete.' : 'Matched CVEs against installed packages.'}
+                expanded={vulnerabilitiesExpanded}
+                onToggle={() => setVulnerabilitiesExpanded(!vulnerabilitiesExpanded)}
+                actionButton={
+                  vulnerabilities.length > 0 ? (
+                    <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-slate-200 pointer-events-none">
+                      <span className="px-2 py-1 rounded border border-rose-500/60 bg-rose-500/10">
+                        {locale === 'de' ? 'Kritisch' : 'Critical'}: {vulnerabilityCounts.critical}
+                      </span>
+                      <span className="px-2 py-1 rounded border border-amber-500/60 bg-amber-500/10">
+                        High: {vulnerabilityCounts.high}
+                      </span>
+                    </div>
+                  ) : null
+                }
+              >
+                {vulnerabilities.length === 0 ? (
+                  <EmptyHint
+                    text={locale === 'de' ? 'Keine CVEs gefunden.' : 'No CVEs detected.'}
+                    detail={locale === 'de' ? 'Sobald Pakete mit bekannten CVEs erkannt werden, erscheinen sie hier.' : 'Once packages match known CVEs they will show up here.'}
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    <div className="space-y-2 max-h-[360px] overflow-auto pr-1">
+                      {vulnerabilities.map((vuln) => (
+                        <div
+                          key={vuln.id}
+                          className="rounded-lg border border-slate-800 bg-[#0C121A]/80 p-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <a
+                              href={getVulnerabilityLink(vuln.cveId)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-sm font-semibold text-cyan-200 hover:text-cyan-50"
+                            >
+                              {vuln.cveId}
+                            </a>
+                            <SeverityPill severity={vuln.severity} />
+                          </div>
+                          <div className="text-xs text-slate-300 flex items-center gap-2 mt-1">
+                            <span className="font-mono text-slate-200">{vuln.packageName}</span>
+                            <span className="text-slate-500">•</span>
+                            <span className="text-slate-200">{vuln.packageVersion}</span>
+                            {typeof vuln.score === 'number' && (
+                              <span className="ml-auto px-2 py-0.5 rounded border border-slate-700 text-[11px] text-slate-100">
+                                CVSS {vuln.score.toFixed(1)}
+                              </span>
+                            )}
+                          </div>
+                          {vuln.description && (
+                            <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+                              {vuln.description}
+                            </p>
+                          )}
+                          <div className="text-[11px] text-slate-500 mt-2">
+                            {formatDistanceToNow(new Date(vuln.createdAt), { locale: dateLocale })} ago
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </ExpandableSectionCard>
+
               <ExpandableSectionCard
                 title={t('sections.securityEvents')}
                 icon={<ShieldCheck className="h-4 w-4" />}
@@ -688,76 +935,87 @@ export default function VMSecurityDetailPage() {
                 )}
                 <div className="mt-3 space-y-2">
                   <button
-                    onClick={triggerSecurityScan}
-                    disabled={scanTriggering}
-                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-cyan-500/50 bg-cyan-500/10 text-sm text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${scanTriggering ? 'animate-spin' : ''}`} />
-                    {scanTriggering ? (locale === 'de' ? 'Scan wird gestartet...' : 'Starting scan...') : (locale === 'de' ? 'Scan jetzt starten' : 'Start scan now')}
-                  </button>
-                </div>
-              </SectionCard>
+                  onClick={triggerSecurityScan}
+                  disabled={scanTriggering || !!scanProgress}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-cyan-500/50 bg-cyan-500/10 text-sm text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <RefreshCw className={`h-4 w-4 ${scanTriggering ? 'animate-spin' : ''}`} />
+                  {scanTriggering
+                    ? (locale === 'de' ? 'Scan wird gestartet...' : 'Starting scan...')
+                    : bannerProgress
+                      ? t('liveScan.running')
+                      : (locale === 'de' ? 'Scan jetzt starten' : 'Start scan now')}
+                </button>
+                {bannerProgress && (
+                  <p className="text-xs text-slate-400">
+                    {t('scanButton.disabled')}
+                  </p>
+                )}
+              </div>
+            </SectionCard>
             </div>
           </div>
         )}
 
-        <SectionCard 
-          title={t('sections.packages')} 
+        <ExpandableSectionCard
+          title={`${t('sections.packages')}${packages.length > 0 ? ` (${packages.length})` : ''}`}
           icon={<PackageSearch className="h-4 w-4" />}
+          expanded={packagesExpanded}
+          onToggle={() => setPackagesExpanded(!packagesExpanded)}
         >
-            {packageLoading ? (
-              <div className="text-sm text-slate-400">{t('emptyStates.packages.hint')}</div>
-            ) : packages.length === 0 ? (
-              <EmptyHint
-                text={t('emptyStates.packages.hint')}
-                detail={t('emptyStates.packages.detail')}
-              />
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 flex-1">
-                    <input
-                      type="search"
-                      value={packageQuery}
-                      onChange={(e) => setPackageQuery(e.target.value)}
-                      placeholder={locale === 'de' ? 'Pakete durchsuchen (Name, Version, Status, Manager)' : 'Search packages (name, version, status, manager)'}
-                      className="w-full rounded-lg border border-slate-700 bg-[#0d141d] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500 focus:outline-none"
-                    />
-                    <div className="text-xs text-slate-400 min-w-[120px] text-right">
-                      {filteredPackages.length}/{packages.length} {locale === 'de' ? 'Pakete' : 'packages'}
-                    </div>
+          {packageLoading ? (
+            <div className="text-sm text-slate-400">{t('emptyStates.packages.hint')}</div>
+          ) : packages.length === 0 ? (
+            <EmptyHint
+              text={t('emptyStates.packages.hint')}
+              detail={t('emptyStates.packages.detail')}
+            />
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 flex-1">
+                  <input
+                    type="search"
+                    value={packageQuery}
+                    onChange={(e) => setPackageQuery(e.target.value)}
+                    placeholder={locale === 'de' ? 'Pakete durchsuchen (Name, Version, Status, Manager)' : 'Search packages (name, version, status, manager)'}
+                    className="w-full rounded-lg border border-slate-700 bg-[#0d141d] px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 focus:border-cyan-500 focus:outline-none"
+                  />
+                  <div className="text-xs text-slate-400 min-w-[120px] text-right">
+                    {filteredPackages.length}/{packages.length} {locale === 'de' ? 'Pakete' : 'packages'}
                   </div>
-                  <button
-                    onClick={downloadPackagesCSV}
-                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-[#0d141d] text-sm text-slate-300 hover:border-cyan-500 hover:text-cyan-100 transition-colors"
-                    title={locale === 'de' ? 'Packages als CSV herunterladen' : 'Download packages as CSV'}
-                  >
-                    <Download className="h-4 w-4" />
-                    CSV
-                  </button>
                 </div>
-                <div className="max-h-[80vh] overflow-auto space-y-2 pr-1">
-                  {filteredPackages.map((pkg) => (
-                    <div
-                      key={pkg.id}
-                      className="rounded-lg border border-slate-800 bg-[#0C121A]/80 p-3"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="min-w-0">
-                          <p className="text-sm text-white font-medium truncate">{pkg.name}</p>
-                          <p className="text-xs text-slate-400 truncate">
-                            {pkg.version} {pkg.manager ? `• ${pkg.manager}` : ''}
-                          </p>
-                        </div>
-                        <PackagePill status={pkg.status} t={t} locale={locale} />
-                      </div>
-                      {pkg.status === 'security_update' && <PackageActionHint pkg={pkg} t={t} locale={locale} />}
-                    </div>
-                  ))}
-                </div>
+                <button
+                  onClick={downloadPackagesCSV}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-700 bg-[#0d141d] text-sm text-slate-300 hover:border-cyan-500 hover:text-cyan-100 transition-colors"
+                  title={locale === 'de' ? 'Packages als CSV herunterladen' : 'Download packages as CSV'}
+                >
+                  <Download className="h-4 w-4" />
+                  CSV
+                </button>
               </div>
-            )}
-          </SectionCard>
+              <div className="max-h-[80vh] overflow-auto space-y-2 pr-1">
+                {filteredPackages.map((pkg) => (
+                  <div
+                    key={pkg.id}
+                    className="rounded-lg border border-slate-800 bg-[#0C121A]/80 p-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0">
+                        <p className="text-sm text-white font-medium truncate">{pkg.name}</p>
+                        <p className="text-xs text-slate-400 truncate">
+                          {pkg.version} {pkg.manager ? `• ${pkg.manager}` : ''}
+                        </p>
+                      </div>
+                      <PackagePill status={pkg.status} t={t} locale={locale} />
+                    </div>
+                    {pkg.status === 'security_update' && <PackageActionHint pkg={pkg} t={t} locale={locale} />}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </ExpandableSectionCard>
 
         {/* Open Ports Section */}
         <ExpandableSectionCard
@@ -929,6 +1187,47 @@ export default function VMSecurityDetailPage() {
                 </p>
               </div>
 
+              <div className="space-y-3 pt-2 border-t border-slate-700">
+                <h3 className="text-sm font-semibold text-cyan-200 uppercase tracking-wider flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4" />
+                  {t('handbook.sections.cveSync.title')}
+                </h3>
+                <p className="text-sm text-slate-300">
+                  {t('handbook.sections.cveSync.description')}
+                </p>
+                <div className="space-y-2 text-xs text-slate-300">
+                  <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-3">
+                    <div className="font-semibold text-slate-100 mb-1">
+                      {t('handbook.sections.cveSync.automatic')}
+                    </div>
+                    <div className="text-slate-400">{t('handbook.sections.cveSync.manual')}</div>
+                  </div>
+                  <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-3">
+                    <div className="font-semibold text-slate-100 mb-1">API</div>
+                    <code className="block text-cyan-200">POST /api/security/cve</code>
+                    <code className="block text-cyan-200 mt-1">GET /api/security/cve</code>
+                    <p className="mt-2 text-slate-400">{t('handbook.sections.cveSync.apiHint')}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3 pt-2 border-t border-slate-700">
+                <h3 className="text-sm font-semibold text-cyan-300 uppercase tracking-wider flex items-center gap-2">
+                  <BookOpen className="h-4 w-4" />
+                  {t('handbook.sections.cveCoverage.title')}
+                </h3>
+                <p className="text-sm text-slate-300">
+                  {t('handbook.sections.cveCoverage.description')}
+                </p>
+                <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
+                  <ul className="text-xs text-slate-200 space-y-1">
+                    {HANDBOOK_DATA.cveCoverageBullets.map((key) => (
+                      <li key={key}>• {t(`handbook.sections.cveCoverage.bullets.${key}`)}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
@@ -940,6 +1239,13 @@ export default function VMSecurityDetailPage() {
       )}
     </AppShell>
   )
+}
+
+function getVulnerabilityLink(cveId: string) {
+  if (!cveId) return '#'
+  return cveId.toUpperCase().startsWith('CVE-')
+    ? `https://nvd.nist.gov/vuln/detail/${cveId}`
+    : `https://osv.dev/vulnerability/${cveId}`
 }
 
 function SectionCard({
@@ -1119,6 +1425,15 @@ function PackageActionHint({ pkg, t, locale }: { pkg: PackageRow; t?: any; local
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+function SummaryTile({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-[#0C121A]/70 p-3">
+      <div className="text-xs uppercase tracking-[0.16em] text-slate-400">{label}</div>
+      <div className="text-lg font-semibold text-white mt-1">{value}</div>
     </div>
   )
 }

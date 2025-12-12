@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getScanProgress } from '@/lib/scan-progress-store'
 
 // Helper function to deduplicate events - keeps only the newest event per source_ip for failed_auth
 function deduplicateEvents(events: any[]): any[] {
@@ -48,7 +49,7 @@ export async function GET(
       return NextResponse.json({ error: 'Machine not found' }, { status: 404 })
     }
 
-    const [rawEvents, auditLogs, lastScan, ports] = await Promise.all([
+    const [rawEvents, auditLogs, lastScan, ports, vulnerabilities] = await Promise.all([
       prisma.securityEvent.findMany({
         where: { machineId: params.id },
         orderBy: { createdAt: 'desc' },
@@ -66,8 +67,31 @@ export async function GET(
       prisma.port.findMany({
         where: { machineId: params.id },
         orderBy: { port: 'asc' }
+      }),
+      prisma.vulnerabilityMatch.findMany({
+        where: { machineId: params.id },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          cve: true,
+          package: true
+        }
       })
     ])
+    let scanProgress = getScanProgress(params.id)
+    if (!scanProgress) {
+      const dbProgress = await prisma.scanProgressState.findUnique({
+        where: { machineId: params.id }
+      })
+      if (dbProgress) {
+        scanProgress = {
+          progress: dbProgress.progress,
+          phase: dbProgress.phase,
+          etaSeconds: dbProgress.etaSeconds,
+          startedAt: dbProgress.startedAt.toISOString(),
+          updatedAt: dbProgress.updatedAt.toISOString()
+        }
+      }
+    }
 
     // Deduplicate events - keeps only newest event per source_ip for failed_auth
     const events = deduplicateEvents(rawEvents).slice(0, 50)
@@ -79,7 +103,9 @@ export async function GET(
       events,
       auditLogs,
       lastScan,
-      ports
+      ports,
+      vulnerabilities,
+      scanProgress
     })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -89,6 +115,8 @@ export async function GET(
         events: [],
         auditLogs: [],
         lastScan: null,
+        vulnerabilities: [],
+        scanProgress: null,
         warning: `Database error (${error.code})`
       }, { status: 500 })
     }

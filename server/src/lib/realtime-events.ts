@@ -24,6 +24,7 @@ interface RealtimeEventBus {
   emitSecurityEvent(machineId: string, event: SecurityEventData): void
   emitAuditLog(machineId: string, log: AuditLogData): void
   emitScanCompleted(machineId: string, scanId: string, summary: unknown): void
+  emitScanProgress(machineId: string, progress: { progress: number; phase: string; etaSeconds: number | null; startedAt: string }): void
   emitSecurityEventsResolved(machineId: string, resolvedCount: number): void
   on(event: string, listener: (...args: unknown[]) => void): this
   emit(event: string, ...args: unknown[]): boolean
@@ -49,6 +50,13 @@ class RealtimeEventBusImpl extends EventEmitter implements RealtimeEventBus {
       scanId, 
       summary,
       timestamp: new Date().toISOString()
+    })
+  }
+
+  emitScanProgress(machineId: string, progress: { progress: number; phase: string; etaSeconds: number | null; startedAt: string }): void {
+    this.emit('scan_progress', {
+      machineId,
+      progress
     })
   }
 

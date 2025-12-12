@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/url"
@@ -220,6 +221,9 @@ type Agent struct {
 
 	packageScanMu   sync.Mutex
 	lastPackageScan time.Time
+
+	scanProgressMu sync.Mutex
+	scanStartedAt  time.Time
 	
 	// Security monitoring state
 	fileHashes         map[string]string // Stores hashes for integrity monitoring
@@ -319,6 +323,48 @@ func (a *Agent) httpBaseURL() string {
 	return base
 }
 
+// sendScanProgress posts live scan progress to the server so the UI can render ETA and phase
+func (a *Agent) sendScanProgress(phase string, percent int, etaSeconds int64) {
+	if a.machineId == "" {
+		return
+	}
+	base := a.httpBaseURL()
+	if base == "" {
+		return
+	}
+
+	payload := map[string]interface{}{
+		"machineId":  a.machineId,
+		"phase":      phase,
+		"progress":   percent,
+		"etaSeconds": etaSeconds,
+		"startedAt":  a.scanStartedAt.Format(time.RFC3339),
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/agent/scan/progress", base), bytes.NewBuffer(data))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Agent-Secret", a.config.SecretKey)
+
+	a.httpMu.Lock()
+	client := a.httpClient
+	a.httpMu.Unlock()
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+}
+
 func (a *Agent) emitAudit(event AuditEvent) {
 	go a.sendAudit([]AuditEvent{event})
 }
@@ -376,6 +422,8 @@ func (a *Agent) sendPackageScan(packages []PackageInfo, summary ScanSummary, con
 	if a.machineId == "" {
 		return
 	}
+
+	a.sendScanProgress("finalizing", 100, 0)
 
 	base := a.httpBaseURL()
 	if base == "" {
@@ -1079,15 +1127,42 @@ func (a *Agent) maybeRunPackageScan() {
 }
 
 func (a *Agent) runPackageScan() {
+	a.scanProgressMu.Lock()
+	a.scanStartedAt = time.Now()
+	a.scanProgressMu.Unlock()
+
+	a.sendScanProgress("inventory", 5, 0)
+
 	pkgs, summary, err := collectPackages()
 	if err != nil {
 		log.Printf("Package scan skipped: %v", err)
 		return
 	}
 
+	eta := func(completedSteps int) int64 {
+		a.scanProgressMu.Lock()
+		defer a.scanProgressMu.Unlock()
+		if completedSteps == 0 {
+			return 20
+		}
+		elapsed := time.Since(a.scanStartedAt)
+		avg := elapsed / time.Duration(completedSteps)
+		remaining := avg * time.Duration(4-completedSteps)
+		if remaining < 2*time.Second {
+			remaining = 2 * time.Second
+		}
+		return int64(remaining.Seconds())
+	}
+
+	a.sendScanProgress("inventory", 25, eta(1))
+
 	// Collect security findings
 	integrityFindings := a.checkFileIntegrity()
+	a.sendScanProgress("integrity", 50, eta(2))
+
 	configFindings := a.checkConfigDrift()
+	a.sendScanProgress("config", 75, eta(3))
+
 	authEvents := a.checkAuthLog()
 
 	log.Printf("Security scan: %d packages, %d integrity findings, %d config findings, %d auth events",
@@ -2167,6 +2242,17 @@ var criticalFiles = []string{
 	"/etc/security/access.conf",
 }
 
+var integrityRoots = []string{"/"}
+
+// directories that should be skipped to avoid infinite/procfs loops
+var integritySkipDirs = map[string]bool{
+	"/proc": true,
+	"/sys":  true,
+	"/dev":  true,
+	"/run":  true,
+	"/tmp":  true,
+}
+
 // configFiles lists configuration files to monitor for drift
 var configFiles = []string{
 	"/etc/ssh/sshd_config",
@@ -2193,6 +2279,54 @@ func computeFileHash(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
+// collectIntegrityPaths walks the filesystem to monitor all files (excluding volatile/system pseudo file systems)
+func collectIntegrityPaths() []string {
+	var paths []string
+	seen := make(map[string]bool)
+
+	for _, root := range integrityRoots {
+		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+
+			// Skip known virtual/ephemeral directories
+			if d.IsDir() {
+				if integritySkipDirs[path] {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			// Skip symlinks to avoid loops
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+
+			// Only include regular files
+			info, err := d.Info()
+			if err != nil || !info.Mode().IsRegular() {
+				return nil
+			}
+
+			if !seen[path] {
+				seen[path] = true
+				paths = append(paths, path)
+			}
+			return nil
+		})
+	}
+
+	// Always include the legacy critical set to ensure they are monitored even if permissions block traversal
+	for _, p := range criticalFiles {
+		if !seen[p] {
+			paths = append(paths, p)
+		}
+	}
+
+	return paths
+}
+
 // checkFileIntegrity monitors critical system files for changes
 func (a *Agent) checkFileIntegrity() []SecurityFinding {
 	var findings []SecurityFinding
@@ -2200,18 +2334,19 @@ func (a *Agent) checkFileIntegrity() []SecurityFinding {
 	a.fileHashesMu.Lock()
 	defer a.fileHashesMu.Unlock()
 
-	for _, path := range criticalFiles {
+	paths := collectIntegrityPaths()
+
+	for _, path := range paths {
 		currentHash, err := computeFileHash(path)
 		if err != nil {
 			// File doesn't exist or not readable - skip
 			continue
 		}
-
 		if previousHash, exists := a.fileHashes[path]; exists {
 			if previousHash != currentHash {
 				findings = append(findings, SecurityFinding{
 					TargetPath: path,
-					Message:    fmt.Sprintf("Critical file modified: %s", path),
+					Message:    fmt.Sprintf("File modified: %s", path),
 					Severity:   "high",
 					Expected:   previousHash[:16] + "...",
 					Actual:     currentHash[:16] + "...",
@@ -2222,6 +2357,18 @@ func (a *Agent) checkFileIntegrity() []SecurityFinding {
 		}
 		// Update stored hash
 		a.fileHashes[path] = currentHash
+	}
+
+	// Detect deletions
+	for storedPath := range a.fileHashes {
+		if _, err := os.Stat(storedPath); err != nil && os.IsNotExist(err) {
+			findings = append(findings, SecurityFinding{
+				TargetPath: storedPath,
+				Message:    fmt.Sprintf("File removed: %s", storedPath),
+				Severity:   "high",
+			})
+			delete(a.fileHashes, storedPath)
+		}
 	}
 
 	return findings

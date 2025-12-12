@@ -48,6 +48,8 @@ model Machine {
   packageScans PackageScan[]
   policyAssignments PolicyAssignment[]
   securityEvents SecurityEvent[]
+  vulnerabilityMatches VulnerabilityMatch[]
+  scanProgress ScanProgressState? @relation("MachineScanProgress")
   
   @@index([status])
   @@index([lastSeen])
@@ -232,6 +234,7 @@ model VMPackage {
 
   machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
   scan    PackageScan? @relation(fields: [scanId], references: [id], onDelete: SetNull)
+  vulnerabilityMatches VulnerabilityMatch[]
 
   @@unique([machineId, name])
   @@index([machineId, status])
@@ -249,6 +252,17 @@ model PackageScan {
   packages    VMPackage[]
 
   @@index([machineId, createdAt])
+}
+
+model ScanProgressState {
+  machineId  String   @id
+  progress   Int
+  phase      String
+  etaSeconds Int?
+  startedAt  DateTime
+  updatedAt  DateTime @updatedAt
+
+  machine Machine @relation("MachineScanProgress", fields: [machineId], references: [id], onDelete: Cascade)
 }
 
 model SecurityPolicy {
@@ -305,4 +319,44 @@ model SecurityEvent {
   @@index([machineId, status])
   @@index([machineId, createdAt])
   @@index([policyId])
+}
+
+model Cve {
+  id          String   @id // e.g. "CVE-2024-1234" or OSV IDs
+  description String?
+  severity    String
+  score       Float?
+  publishedAt DateTime
+  affected    String?  // JSON payload of affected packages and ranges
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  matches     VulnerabilityMatch[]
+
+  @@index([id])
+  @@index([severity])
+  @@index([publishedAt])
+}
+
+model VulnerabilityMatch {
+  id          String   @id @default(cuid())
+  cveId       String
+  packageId   String
+  machineId   String
+  createdAt   DateTime @default(now())
+  cve         Cve       @relation(fields: [cveId], references: [id])
+  package     VMPackage @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  machine     Machine   @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@unique([cveId, packageId])
+  @@index([machineId])
+}
+
+model CveMirrorState {
+  id        String   @id @default("global")
+  lastSync  DateTime
+  status    String   // syncing, idle, error
+  error     String?
+  mode      String   @default("full") // full | scoped
+  ecosystems String? // JSON array of mirrored ecosystems
+  totalCves Int?
 }
