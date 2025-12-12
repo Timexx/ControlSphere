@@ -20,6 +20,7 @@ type OverviewItem = {
   highestSeverity: string
   lastScanAt: string | null
   summary: any
+  securityUpdates?: number
 }
 
 export default function SecurityOverviewPage() {
@@ -32,7 +33,7 @@ export default function SecurityOverviewPage() {
 
   const loadData = async () => {
     try {
-      const res = await fetch('/api/security/overview')
+      const res = await fetch('/api/security/overview', { cache: 'no-store' })
       const data = await res.json()
       setItems(data.items || [])
     } catch (error) {
@@ -105,6 +106,7 @@ export default function SecurityOverviewPage() {
 }
 
 function SecurityCard({ item, t, dateLocale }: { item: OverviewItem; t: ReturnType<typeof useTranslations>; dateLocale: Locale }) {
+  const tDetail = useTranslations('securityDetail')
   const statusTone =
     item.securityStatus === 'good' ? 'good' : item.securityStatus === 'warn' ? 'warn' : 'critical'
   const StatusIcon =
@@ -125,7 +127,9 @@ function SecurityCard({ item, t, dateLocale }: { item: OverviewItem; t: ReturnTy
   return (
     <Link
       href={`/security/${item.machineId}`}
-      className="block rounded-xl border border-slate-800 bg-[#0B1118]/70 hover:border-cyan-500/50 transition-all shadow-[0_0_35px_rgba(0,243,255,0.05)] p-4 space-y-4"
+      className={`block rounded-xl border border-slate-800 bg-[#0B1118]/70 hover:border-cyan-500/50 transition-all shadow-[0_0_35px_rgba(0,243,255,0.05)] p-4 space-y-4 ${
+        item.securityUpdates && item.securityUpdates > 0 ? 'border-rose-500/70 ring-1 ring-rose-500/30' : ''
+      }`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -134,8 +138,16 @@ function SecurityCard({ item, t, dateLocale }: { item: OverviewItem; t: ReturnTy
           </p>
           <h3 className="text-lg font-semibold text-white">{item.hostname}</h3>
         </div>
-        <div className="h-11 w-11 rounded-lg border border-slate-700 bg-slate-900/60 flex items-center justify-center">
-          <StatusIcon className="h-5 w-5 text-cyan-300" />
+        <div className="flex items-center gap-2">
+          {item.securityUpdates && item.securityUpdates > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full border border-rose-500/60 bg-rose-500/10 text-rose-100 text-[11px] font-semibold uppercase tracking-[0.14em]">
+              <ShieldAlert className="h-3.5 w-3.5" />
+              {tDetail('packageStatus.securityUpdate')}
+            </span>
+          )}
+          <div className="h-11 w-11 rounded-lg border border-slate-700 bg-slate-900/60 flex items-center justify-center">
+            <StatusIcon className="h-5 w-5 text-cyan-300" />
+          </div>
         </div>
       </div>
       <div className="flex items-center gap-3 text-sm">
@@ -152,10 +164,6 @@ function SecurityCard({ item, t, dateLocale }: { item: OverviewItem; t: ReturnTy
         </span>
         <span className="text-slate-400">
           {t('cards.agent')} <span className="text-slate-200">{item.agentStatus}</span>
-        </span>
-        <span className="text-slate-500">•</span>
-        <span className="text-slate-400">
-          {t('cards.events', { count: item.openEvents })}
         </span>
       </div>
       <div className="flex items-center gap-2 text-xs text-slate-400">
