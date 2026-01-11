@@ -1,6 +1,11 @@
 # ControlSphere ![Beta](https://img.shields.io/badge/status-beta-orange)
 
-A modern, web-based platform for managing and monitoring multiple Linux systems.
+This is a modern, web-based platform for managing and monitoring multiple Linux systems, with lightweight agents installed on each system. 
+
+The project was born from the idea of managing my servers more efficiently without spending money on large operators. 
+To support EU states in the open-source initiative, I am making the entire project available under the Apache 2 licence so that all companies and organisations can benefit from a free option they can adapt to their own needs. Everything is designed to ensure the highest possible level of security.
+
+I will continue to develop the project, so please join me in promoting open source! 
 
 ## 🚀 Features
 
@@ -283,55 +288,23 @@ cd server && npm run dev
 - [x] Batch operations (update all VMs)  
 - [ ] Custom scripts library  
 
-## 📄 License & Terms of Use
+## 📄 License
 
-### ❤️ Open Source Spirit with a Future
-ControlSphere is developed with ❤️ and is currently **free** for everyone. I believe in open source and want you to be able to use the system freely – today and, hopefully, in the future as well.
+ControlSphere is licensed under the **Apache License, Version 2.0** (SPDX: `Apache-2.0`).
 
-### Current Usage (Free)
-- **Professional use**: Ideal for admins and DevOps teams  
-- **Personal projects**: Use it for your own systems  
-- **Learning & experimentation**: Perfect for trying things out and learning  
-- **All features**: Full functionality is available  
+**Copyright (c) 2025 Tim Klement**
 
-### Future Development
-To ensure the long-term development of ControlSphere, I reserve the right to offer commercial options in the future. These could include premium features, dedicated support, or enterprise editions.
+You may obtain a copy of the License at:
+```text
+http://www.apache.org/licenses/LICENSE-2.0
+```
 
-### Fair Rules
-- **Redistribution**: Feel free to share with friends and colleagues!  
-- **No resale**: Neither the original code nor modified versions may be sold  
-- **Feedback**: I appreciate issues, feature requests, and contributions  
-- **Respect**: Please respect copyrights and intellectual property  
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an **"AS IS"** basis, **WITHOUT WARRANTIES OR CONDITIONS** of any kind.
 
-### Contact & Support
-Got questions or ideas? [Email Tim Klement](mailto:46tonal_verstand@icloud.com)
+### Contributions
 
-**Thank you for your interest in ControlSphere!** 🚀
+By contributing to this repository, you agree that your contributions will be licensed under the same **Apache-2.0** license.
 
 ## 👨‍💻 Author
 
 Tim Klement
-
----
-
-### 📄 License (NCRL 1.2)
-
-ControlSphere is provided under the **Non-Commercial Redistribution License (NCRL)**.
-
-**Copyright (c) 2025 Tim Klement. All rights reserved.**
-
-#### 1. Permitted Use
-Organizations and individuals may use, run, and modify this Software free of charge for internal purposes, including internal commercial use.  
-Internal hosting, including cloud deployment for an organization’s own operations, is permitted.
-
-#### 2. Restrictions
-(a) Selling, licensing, renting, or otherwise commercially redistributing this Software or any derivative work is strictly prohibited.  
-(b) The Software may not be used to provide Software-as-a-Service (SaaS), hosted services, cloud services, API-as-a-Service offerings, multi-tenant platforms, or any other service to third parties, whether paid or unpaid. **Internal hosting for the organization’s own operations is permitted.**  
-(c) Public distribution of modified or unmodified versions is permitted only if distributed free of charge and under this same License.  
-(d) Removal or alteration of copyright notices is prohibited.
-
-#### 3. No Warranty
-This Software is provided “as is,” without warranty of any kind, express or implied. Use at your own risk.
-
-#### 4. Termination
-Any violation of this License terminates all granted rights immediately.
