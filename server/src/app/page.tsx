@@ -59,7 +59,13 @@ export default function DashboardPage() {
   }, [])
 
   useEffect(() => {
-    fetchMachines()
+    const fallbackTimer = window.setTimeout(() => {
+      setLoading(false)
+    }, 500)
+
+    fetchMachines().finally(() => {
+      clearTimeout(fallbackTimer)
+    })
 
     let ws: WebSocket | null = null
     let mounted = true
@@ -169,27 +175,16 @@ export default function DashboardPage() {
     }
   }, [fetchMachines])
 
-  if (loading) {
-    return (
-      <div className="min-h-screen relative flex items-center justify-center bg-[#050505] text-[#E0E0E0] overflow-hidden">
-        <BackgroundLayers />
-        <div className="relative z-10 flex flex-col items-center space-y-4">
-          <div className="h-14 w-14 rounded-xl border border-cyan-500/50 bg-cyan-500/10 flex items-center justify-center shadow-[0_0_30px_rgba(0,243,255,0.35)]">
-            <div className="h-10 w-10 rounded-full border border-cyan-400/60 animate-spin border-t-transparent" />
-          </div>
-          <p className="text-sm font-mono tracking-[0.24em] uppercase text-cyan-200/80">
-            {t('loading')}
-          </p>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <AppShell
       onAddAgent={() => setShowAddModal(true)}
     >
       <div className="space-y-8">
+        {loading && (
+          <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 px-4 py-3 text-xs uppercase tracking-[0.24em] text-cyan-200/70 font-mono">
+            {t('loading')}
+          </div>
+        )}
         <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70 font-mono">
@@ -214,7 +209,16 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {machines.length === 0 ? (
+        {loading && machines.length === 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div
+                key={index}
+                className="h-[220px] rounded-xl border border-slate-800 bg-[#0d141b] animate-pulse"
+              />
+            ))}
+          </div>
+        ) : machines.length === 0 ? (
           <div className="text-center py-14 rounded-2xl border border-dashed border-cyan-500/30 bg-[#0A0F14]/70 backdrop-blur-lg shadow-[0_0_45px_rgba(0,243,255,0.12)]">
             <div className="mx-auto h-14 w-14 rounded-xl border border-cyan-400/40 bg-cyan-500/10 flex items-center justify-center mb-4">
               <Activity className="h-7 w-7 text-cyan-300" />
