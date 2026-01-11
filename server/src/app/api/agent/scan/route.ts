@@ -157,13 +157,22 @@ export async function POST(request: NextRequest) {
     }
 
     // Update scan summary with actual package count from DB
-    const actualPackageCount = await prisma.vMPackage.count({ where: { machineId } })
-    const actualUpdates = await prisma.vMPackage.count({ 
-      where: { machineId, status: 'update_available' } 
+    const statusCounts = await prisma.vMPackage.groupBy({
+      by: ['status'],
+      where: { machineId },
+      _count: { _all: true }
     })
-    const actualSecurityUpdates = await prisma.vMPackage.count({ 
-      where: { machineId, status: 'security_update' } 
-    })
+    let actualPackageCount = 0
+    let actualUpdates = 0
+    let actualSecurityUpdates = 0
+    for (const row of statusCounts) {
+      actualPackageCount += row._count._all
+      if (row.status === 'update_available') {
+        actualUpdates = row._count._all
+      } else if (row.status === 'security_update') {
+        actualSecurityUpdates = row._count._all
+      }
+    }
 
     const actualSummary = {
       ...mergedSummary,
@@ -179,7 +188,14 @@ export async function POST(request: NextRequest) {
     })
 
     const machinePackages = await prisma.vMPackage.findMany({
-      where: { machineId }
+      where: { machineId },
+      select: {
+        id: true,
+        machineId: true,
+        name: true,
+        version: true,
+        manager: true
+      }
     })
 
     const vulnerabilityResult = await scanPackages(

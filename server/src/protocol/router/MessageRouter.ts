@@ -13,6 +13,8 @@ export interface IMessageRouter {
   route(type: string, data: any): Promise<void>
 }
 
+const QUIET_TYPES = new Set(['heartbeat', 'metrics', 'port_discovery'])
+
 export class MessageRouter implements IMessageRouter {
   private handlers: Map<string, MessageHandler> = new Map()
 
@@ -41,9 +43,14 @@ export class MessageRouter implements IMessageRouter {
     }
 
     try {
-      this.logger.debug('RoutingMessage', { type, dataKeys: Object.keys(data) })
+      const shouldLog = !QUIET_TYPES.has(type)
+      if (shouldLog) {
+        this.logger.debug('RoutingMessage', { type, dataKeys: Object.keys(data) })
+      }
       await Promise.resolve(handler(data))
-      this.logger.debug('MessageRouted', { type })
+      if (shouldLog) {
+        this.logger.debug('MessageRouted', { type })
+      }
     } catch (error) {
       this.logger.error('MessageHandlerError', {
         type,

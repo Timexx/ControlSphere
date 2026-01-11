@@ -14,6 +14,15 @@ import { SecureRemoteTerminalService } from '../domain/services/SecureRemoteTerm
 import { SecretEncryptionService } from '../infrastructure/crypto/SecretEncryptionService'
 
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false })
+function parseInterval(value: string | undefined, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+const HEARTBEAT_STATUS_INTERVAL_MS = parseInterval(process.env.HEARTBEAT_STATUS_INTERVAL_MS, 10000)
+const HEARTBEAT_METRICS_INTERVAL_MS = parseInterval(process.env.HEARTBEAT_METRICS_INTERVAL_MS, 15000)
+const HEARTBEAT_PORTS_INTERVAL_MS = parseInterval(process.env.HEARTBEAT_PORTS_INTERVAL_MS, 60000)
+const HEARTBEAT_BROADCAST_INTERVAL_MS = parseInterval(process.env.HEARTBEAT_BROADCAST_INTERVAL_MS, 5000)
 
 function normalizeOutputChunk(raw: unknown): string {
   if (raw === null || raw === undefined) return ''
@@ -99,6 +108,12 @@ export class AgentConnectionManager {
   private router: MessageRouter
   private normalizer: OutputNormalizer
   private secretEncryption: SecretEncryptionService
+  private heartbeatState = new Map<string, {
+    statusAt: number
+    metricsAt: number
+    portsAt: number
+    broadcastAt: number
+  }>()
 
   constructor(
     private readonly prisma: PrismaClient,
@@ -385,12 +400,23 @@ export class AgentConnectionManager {
     }
 
     try {
-      await this.prisma.machine.update({
-        where: { id: machineId },
-        data: { status: 'online', lastSeen: new Date() }
-      })
+      const now = Date.now()
+      const state = this.heartbeatState.get(machineId) || {
+        statusAt: 0,
+        metricsAt: 0,
+        portsAt: 0,
+        broadcastAt: 0
+      }
 
-      if (data.metrics && typeof data.metrics === 'object') {
+      if (now - state.statusAt >= HEARTBEAT_STATUS_INTERVAL_MS) {
+        await this.prisma.machine.update({
+          where: { id: machineId },
+          data: { status: 'online', lastSeen: new Date() }
+        })
+        state.statusAt = now
+      }
+
+      if (data.metrics && typeof data.metrics === 'object' && now - state.metricsAt >= HEARTBEAT_METRICS_INTERVAL_MS) {
         await this.prisma.metric.create({
           data: {
             machineId,
@@ -404,13 +430,20 @@ export class AgentConnectionManager {
             uptime: data.metrics.uptime || 0
           }
         })
+        state.metricsAt = now
       }
 
-      if (Array.isArray(data.ports) && data.ports.length > 0) {
+      if (Array.isArray(data.ports) && data.ports.length > 0 && now - state.portsAt >= HEARTBEAT_PORTS_INTERVAL_MS) {
         await updatePorts(this.prisma, machineId, data.ports)
+        state.portsAt = now
       }
 
-      this.broadcast({ type: 'machine_heartbeat', machineId, timestamp: new Date() })
+      if (now - state.broadcastAt >= HEARTBEAT_BROADCAST_INTERVAL_MS) {
+        this.broadcast({ type: 'machine_heartbeat', machineId, timestamp: new Date() })
+        state.broadcastAt = now
+      }
+
+      this.heartbeatState.set(machineId, state)
     } catch (error) {
       this.logger.warn('HeartbeatProcessingFailed', { machineId, error: (error as Error).message })
     }
@@ -583,6 +616,17 @@ export class AgentConnectionManager {
     }
 
     try {
+      const now = Date.now()
+      const state = this.heartbeatState.get(machineId) || {
+        statusAt: 0,
+        metricsAt: 0,
+        portsAt: 0,
+        broadcastAt: 0
+      }
+      if (now - state.metricsAt < HEARTBEAT_METRICS_INTERVAL_MS) {
+        return
+      }
+
       await this.prisma.metric.create({
         data: {
           machineId,
@@ -596,6 +640,8 @@ export class AgentConnectionManager {
           uptime: metrics.uptime || 0
         }
       })
+      state.metricsAt = now
+      this.heartbeatState.set(machineId, state)
       this.logger.debug('MetricsProcessed', { machineId })
     } catch (error) {
       this.logger.warn('MetricsProcessingFailed', { machineId, error: (error as Error).message })

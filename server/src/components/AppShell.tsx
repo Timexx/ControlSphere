@@ -120,8 +120,26 @@ export default function AppShell({
 
   useEffect(() => {
     fetchVulnSummary()
-    const interval = setInterval(fetchVulnSummary, 45000)
-    return () => clearInterval(interval)
+    const intervalMs = 120000
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchVulnSummary()
+      }
+    }
+
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchVulnSummary()
+      }
+    }, intervalMs)
+
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
   }, [fetchVulnSummary])
 
   const handleRefreshSession = async () => {

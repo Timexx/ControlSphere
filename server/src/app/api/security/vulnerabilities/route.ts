@@ -4,33 +4,26 @@ import { prisma } from '@/lib/prisma'
 
 export async function GET() {
   try {
-    const matches = await prisma.vulnerabilityMatch.findMany({
-      select: {
-        machineId: true,
-        cve: {
-          select: { severity: true }
-        }
-      }
-    })
-
-    let critical = 0
-    let high = 0
-    const affectedMachines = new Set<string>()
-
-    for (const match of matches) {
-      const severity = (match.cve?.severity || '').toLowerCase()
-      if (severity === 'critical') {
-        critical += 1
-        affectedMachines.add(match.machineId)
-      } else if (severity === 'high') {
-        high += 1
-      }
+    const criticalFilter = {
+      cve: { severity: { equals: 'critical' } }
     }
+    const highFilter = {
+      cve: { severity: { equals: 'high' } }
+    }
+
+    const [critical, high, affectedMachineRows] = await Promise.all([
+      prisma.vulnerabilityMatch.count({ where: criticalFilter }),
+      prisma.vulnerabilityMatch.count({ where: highFilter }),
+      prisma.vulnerabilityMatch.groupBy({
+        by: ['machineId'],
+        where: criticalFilter
+      })
+    ])
 
     return NextResponse.json({
       critical,
       high,
-      affectedMachines: affectedMachines.size
+      affectedMachines: affectedMachineRows.length
     })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
