@@ -389,7 +389,11 @@ export default function VMSecurityDetailPage() {
         current = normalized
       }
     }
-    for (const evt of events) consider(evt.severity)
+    // Only count events that are still active (open or acknowledged).
+    // Resolved events must not influence the severity badge.
+    for (const evt of events.filter((e) => e.status === 'open' || e.status === 'ack')) {
+      consider(evt.severity)
+    }
     for (const vuln of vulnerabilities) consider(vuln.severity)
     return current
   }, [events, vulnerabilities])
@@ -674,9 +678,13 @@ export default function VMSecurityDetailPage() {
               tone={meta.openEvents > 0 ? 'warn' : 'good'}
             />
             <StatusBadge
-              icon={<ListChecks className="h-4 w-4" />}
-              label={locale === 'de' ? `Schweregrad: ${highestSeverity}` : `Severity: ${highestSeverity}`}
-              tone={highestSeverity === 'critical' || highestSeverity === 'high' ? 'warn' : 'info'}
+              icon={highestSeverity === 'info' ? <ShieldCheck className="h-4 w-4" /> : <ListChecks className="h-4 w-4" />}
+              label={
+                highestSeverity === 'info'
+                  ? (locale === 'de' ? 'Keine Bedrohungen' : 'No threats')
+                  : (locale === 'de' ? `Schweregrad: ${highestSeverity.toUpperCase()}` : `Severity: ${highestSeverity.toUpperCase()}`)
+              }
+              tone={highestSeverity === 'critical' || highestSeverity === 'high' ? 'warn' : highestSeverity === 'info' ? 'good' : 'info'}
             />
           </div>
         </div>

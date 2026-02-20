@@ -164,7 +164,7 @@ const messages = {
       eyebrow: 'Historische Analysen',
       title: 'Forecasting & Trends (deterministisch)',
       subtitle: 'SMA-Glättung, lineare Regression und Rates-of-Change für CPU / RAM / Disk. Kein Blackbox-AI, nur nachvollziehbare Mathematik.',
-      badge: 'y = m*x + b | SMA | dy/dt',
+      badge: 'Gewichtete Regression | adaptives SMA | Bollinger | R²',
       refresh: 'Aktualisieren',
       loading: 'Lädt...',
       processing: 'Berechne Zeitreihen...',
@@ -199,10 +199,17 @@ const messages = {
           stable: 'Trend stabil'
         },
         dynamics: {
-          title: 'Aktuelle Dynamik',
-          value: 'CPU {cpu}%/h | RAM {ram}%/h',
-          detail: 'Disk {disk}%/h'
+          title: 'System-Überblick',
+          cpuLine: 'CPU: {arrow} Ø {avg}%',
+          ramLine: 'RAM: {arrow} Ø {avg}%',
+          diskLine: 'Disk: {arrow} Ø {avg}%',
         },
+        trend: {
+          rising: '↑ steigend',
+          falling: '↓ fallend',
+          stable: '→ stabil'
+        },
+        insufficientData: 'Wenige Daten — Prognose unsicher',
         provision: {
           cpu: 'CPU Provisioning',
           ram: 'RAM Provisioning',
@@ -235,7 +242,22 @@ const messages = {
       downsample: {
         compacted: 'Downsample x{bucket} ({raw} Rohpunkte)',
         raw: '{raw} Rohpunkte'
-      }
+      },
+      confidence: {
+        label: 'Konfidenz',
+        high: 'Hoch (R²≥0.7)',
+        medium: 'Mittel (R²≥0.35)',
+        low: 'Niedrig (R²<0.35)'
+      },
+      healthScore: {
+        label: 'System-Gesundheit',
+        badge: 'Score {score}%',
+        ok: 'Stabil',
+        warn: 'Unter Last',
+        critical: 'Kritisch'
+      },
+      bollinger: 'Bollinger-Band (±2σ)',
+      trendLine: 'Trendlinie'
     },
     notes: {
       saved: 'Gespeichert {time}'

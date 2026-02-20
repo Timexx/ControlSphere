@@ -33,6 +33,26 @@ import { formatDistanceToNow } from 'date-fns'
 import { de, enUS } from 'date-fns/locale'
 import { useTranslations, useLocale } from 'next-intl'
 import { cn, formatBytes, formatUptime } from '@/lib/utils'
+import {
+  calculateWeightedRegression,
+  calculateExpRegression,
+  calculateSMA,
+  calculateBollinger,
+  calculateWindowedRoC,
+  calculatePercentile,
+  forecastThreshold,
+  computeSMAWindow,
+  calculateHealthScore,
+  confidenceLabel,
+  describeTrend,
+  meanUsage,
+  dataSpanHours,
+  type UsageKey,
+  type RegressionResult,
+  type ForecastResult,
+  type ConfidenceLabel,
+  type TrendDirection,
+} from '@/lib/analytics'
 import CommandLogDialog from '@/components/CommandLogDialog'
 import AppShell from '@/components/AppShell'
 import AddAgentModal from '@/components/AddAgentModal'
@@ -106,7 +126,6 @@ interface Machine {
 }
 
 type RangeKey = '24h' | '7d' | '30d' | '90d'
-type UsageKey = 'cpuUsage' | 'ramUsage' | 'diskUsage'
 
 const RANGE_TO_HOURS: Record<RangeKey, number> = {
   '24h': 24,
@@ -699,24 +718,45 @@ export default function MachinePage() {
   const sortedAnalytics = analyticsData
     .slice()
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-  const smoothingWindow = 12
+  const smoothingWindow = computeSMAWindow(analyticsMeta.rangeHours, sortedAnalytics.length)
   const smaCpu = calculateSMA(sortedAnalytics, 'cpuUsage', smoothingWindow)
   const smaRam = calculateSMA(sortedAnalytics, 'ramUsage', smoothingWindow)
   const smaDisk = calculateSMA(sortedAnalytics, 'diskUsage', smoothingWindow)
+  const bollingerCpu = calculateBollinger(sortedAnalytics, 'cpuUsage', smoothingWindow)
+  const bollingerRam = calculateBollinger(sortedAnalytics, 'ramUsage', smoothingWindow)
+  const bollingerDisk = calculateBollinger(sortedAnalytics, 'diskUsage', smoothingWindow)
   const chartData = sortedAnalytics.map((point, index) => ({
     ...point,
     smaCpu: smaCpu[index],
     smaRam: smaRam[index],
     smaDisk: smaDisk[index],
+    bbCpuUpper: bollingerCpu[index].upper,
+    bbCpuLower: bollingerCpu[index].lower,
+    bbRamUpper: bollingerRam[index].upper,
+    bbRamLower: bollingerRam[index].lower,
+    bbDiskUpper: bollingerDisk[index].upper,
+    bbDiskLower: bollingerDisk[index].lower,
   }))
   const forecastDisk = forecastThreshold(sortedAnalytics, 'diskUsage', 100)
   const forecastCpu = forecastThreshold(sortedAnalytics, 'cpuUsage', 90)
-  const regressionCpu = calculateRegression(sortedAnalytics, 'cpuUsage')
-  const regressionRam = calculateRegression(sortedAnalytics, 'ramUsage')
-  const regressionDisk = calculateRegression(sortedAnalytics, 'diskUsage')
-  const rocCpu = calculateRateOfChange(sortedAnalytics, 'cpuUsage')
-  const rocRam = calculateRateOfChange(sortedAnalytics, 'ramUsage')
-  const rocDisk = calculateRateOfChange(sortedAnalytics, 'diskUsage')
+  // Weighted regression (exponential decay) for CPU+RAM; log-transform for Disk
+  const regressionCpu = calculateWeightedRegression(sortedAnalytics, 'cpuUsage')
+  const regressionRam = calculateWeightedRegression(sortedAnalytics, 'ramUsage')
+  const regressionDisk = calculateExpRegression(sortedAnalytics, 'diskUsage')
+  // Windowed rate-of-change: mini-regression on last 10 % of points (more stable than 2-point diff)
+  const rocCpu = calculateWindowedRoC(sortedAnalytics, 'cpuUsage')
+  const rocRam = calculateWindowedRoC(sortedAnalytics, 'ramUsage')
+  const rocDisk = calculateWindowedRoC(sortedAnalytics, 'diskUsage')
+  // Human-readable trend direction
+  const trendCpu = describeTrend(rocCpu)
+  const trendRam = describeTrend(rocRam)
+  const trendDisk = describeTrend(rocDisk)
+  // Mean utilization
+  const avgCpu = meanUsage(sortedAnalytics, 'cpuUsage')
+  const avgRam = meanUsage(sortedAnalytics, 'ramUsage')
+  const avgDisk = meanUsage(sortedAnalytics, 'diskUsage')
+  // Data span for "insufficient data" warnings
+  const spanHours = dataSpanHours(sortedAnalytics)
   const pctCpu = calculatePercentile(sortedAnalytics, 'cpuUsage', 0.95)
   const pctRam = calculatePercentile(sortedAnalytics, 'ramUsage', 0.95)
   const pctDisk = calculatePercentile(sortedAnalytics, 'diskUsage', 0.95)
@@ -729,6 +769,12 @@ export default function MachinePage() {
   const horizonCapHours = 24 * 365 * 5
   const diskForecastFar = forecastDisk ? forecastDisk.hoursRemaining > horizonCapHours : false
   const cpuForecastFar = forecastCpu ? forecastCpu.hoursRemaining > horizonCapHours : false
+  const healthScore = calculateHealthScore(pctCpu, pctRam, pctDisk)
+  const healthTone: Tone = healthScore === null ? 'muted' : healthScore >= 80 ? 'warn' : healthScore >= 60 ? 'note' : 'ok'
+  // R² confidence labels for forecast tiles
+  const confCpu = regressionCpu ? confidenceLabel(regressionCpu.r2) : null
+  const confRam = regressionRam ? confidenceLabel(regressionRam.r2) : null
+  const confDisk = regressionDisk ? confidenceLabel(regressionDisk.r2) : null
 
   return (
     <AppShell hideNav onAddAgent={() => setShowAddModal(true)}>
@@ -877,15 +923,40 @@ export default function MachinePage() {
                 </svg>
                 {t('system.title')}
               </h2>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                {osInfo.distro && (
-                  <InfoItem label={t('system.os')} value={`${osInfo.distro} ${osInfo.release}`} />
+              <div className={cn(
+                "grid gap-6",
+                machine.links?.length ? "grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px]" : "grid-cols-1"
+              )}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+                  {osInfo.distro && (
+                    <InfoItem label={t('system.os')} value={`${osInfo.distro} ${osInfo.release}`} />
+                  )}
+                  {osInfo.kernel && (
+                    <InfoItem label={t('system.kernel')} value={osInfo.kernel} />
+                  )}
+                  <InfoItem label={t('system.hostname')} value={machine.hostname} />
+                  <InfoItem label={t('system.ip')} value={machine.ip} />
+                </div>
+
+                {machine.links?.length > 0 && (
+                  <div>
+                    <div className="space-y-2 max-h-[220px] overflow-auto pr-1">
+                      {machine.links.map((link) => (
+                        <a
+                          key={link.id}
+                          href={link.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="w-full rounded-lg border border-cyan-400/30 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-100 px-3 py-2 transition-colors flex items-center justify-between gap-3"
+                          title={link.description || link.url}
+                        >
+                          <span className="text-sm font-medium truncate">{link.title}</span>
+                          <ExternalLink className="h-4 w-4 shrink-0 text-cyan-200/80" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
                 )}
-                {osInfo.kernel && (
-                  <InfoItem label={t('system.kernel')} value={osInfo.kernel} />
-                )}
-                <InfoItem label={t('system.hostname')} value={machine.hostname} />
-                <InfoItem label={t('system.ip')} value={machine.ip} />
               </div>
             </div>
 
@@ -1018,9 +1089,22 @@ export default function MachinePage() {
                 <p className="text-sm text-slate-400">
                   {t('analytics.subtitle')}
                 </p>
-                <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 px-3 py-1 text-xs text-slate-300 border border-slate-800">
-                  <Sigma className="h-4 w-4 text-cyan-300" />
-                  <span>{t('analytics.badge')}</span>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <div className="inline-flex items-center gap-2 rounded-md bg-slate-900/80 px-3 py-1 text-xs text-slate-300 border border-slate-800">
+                    <Sigma className="h-4 w-4 text-cyan-300" />
+                    <span>{t('analytics.badge')}</span>
+                  </div>
+                  {healthScore !== null && (
+                    <div className={cn(
+                      "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-semibold border",
+                      healthScore >= 80 ? 'bg-red-500/10 border-red-500/40 text-red-200' :
+                      healthScore >= 60 ? 'bg-amber-500/10 border-amber-500/40 text-amber-200' :
+                      'bg-emerald-500/10 border-emerald-500/40 text-emerald-200'
+                    )}>
+                      <Activity className="h-3.5 w-3.5" />
+                      <span>{t('analytics.healthScore.badge', { score: healthScore })}</span>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2 items-center justify-end whitespace-nowrap">
@@ -1071,9 +1155,10 @@ export default function MachinePage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
                     <ForecastStat
                       title={t('analytics.tiles.disk.title')}
-                      tone={forecastDisk && !diskForecastFar ? 'warn' : provisioning.disk.tone}
+                      tone={forecastDisk && !diskForecastFar ? (forecastDisk.insufficientData ? 'note' : 'warn') : provisioning.disk.tone}
                       accent="disk"
                       icon={<TrendingUp className="h-4 w-4" />}
+                      confidence={confDisk}
                       value={
                         forecastDisk && !diskForecastFar
                           ? t('analytics.tiles.disk.fullIn', { time: formatHours(forecastDisk.hoursRemaining) })
@@ -1081,7 +1166,9 @@ export default function MachinePage() {
                       }
                       detail={
                         forecastDisk && !diskForecastFar
-                          ? t('analytics.tiles.disk.eta', { time: formatDistanceToNow(forecastDisk.eta, { addSuffix: true, locale: dateLocale }) })
+                          ? (forecastDisk.insufficientData
+                            ? t('analytics.tiles.insufficientData')
+                            : t('analytics.tiles.disk.eta', { time: formatDistanceToNow(forecastDisk.eta, { addSuffix: true, locale: dateLocale }) }))
                           : t('analytics.tiles.disk.trend', { trend: formatSlopePerDay(regressionDisk?.slopePerHour || 0, t) })
                       }
                     />
@@ -1090,6 +1177,7 @@ export default function MachinePage() {
                       tone={leakPerDayRam > 0.2 ? 'warn' : leakPerDayRam > 0.05 ? 'note' : 'ok'}
                       accent="ram"
                       icon={<MemoryStick className="h-4 w-4" />}
+                      confidence={confRam}
                       value={formatSlopePerDay(regressionRam?.slopePerHour || 0)}
                       detail={pctRam ? loadSummary(pctRam, t) : t('analytics.tiles.ramLeak.noData')}
                     />
@@ -1098,6 +1186,7 @@ export default function MachinePage() {
                       tone={pctCpu && pctCpu > 90 ? 'warn' : 'ok'}
                       accent="cpu"
                       icon={<Cpu className="h-4 w-4" />}
+                      confidence={confCpu}
                       value={
                         forecastCpu && !cpuForecastFar
                           ? t('analytics.tiles.cpu.ninetyIn', { time: formatHours(forecastCpu.hoursRemaining) })
@@ -1105,7 +1194,9 @@ export default function MachinePage() {
                       }
                       detail={
                         forecastCpu && !cpuForecastFar
-                          ? t('analytics.tiles.cpu.eta', { time: formatDistanceToNow(forecastCpu.eta, { addSuffix: true, locale: dateLocale }) })
+                          ? (forecastCpu.insufficientData
+                            ? t('analytics.tiles.insufficientData')
+                            : t('analytics.tiles.cpu.eta', { time: formatDistanceToNow(forecastCpu.eta, { addSuffix: true, locale: dateLocale }) }))
                           : pctCpu
                             ? loadSummary(pctCpu, t)
                             : t('analytics.tiles.cpu.stable')
@@ -1115,8 +1206,20 @@ export default function MachinePage() {
                       title={t('analytics.tiles.dynamics.title')}
                       tone="info"
                       icon={<Activity className="h-4 w-4" />}
-                      value={t('analytics.tiles.dynamics.value', { cpu: rocCpu.toFixed(2), ram: rocRam.toFixed(2) })}
-                      detail={t('analytics.tiles.dynamics.detail', { disk: rocDisk.toFixed(2) })}
+                      value={t('analytics.tiles.dynamics.cpuLine', {
+                        arrow: t(`analytics.tiles.trend.${trendCpu}`),
+                        avg: avgCpu?.toFixed(1) ?? '—',
+                      })}
+                      detail={[
+                        t('analytics.tiles.dynamics.ramLine', {
+                          arrow: t(`analytics.tiles.trend.${trendRam}`),
+                          avg: avgRam?.toFixed(1) ?? '—',
+                        }),
+                        t('analytics.tiles.dynamics.diskLine', {
+                          arrow: t(`analytics.tiles.trend.${trendDisk}`),
+                          avg: avgDisk?.toFixed(1) ?? '—',
+                        }),
+                      ].join(' · ')}
                     />
                   </div>
 
@@ -1252,6 +1355,25 @@ export default function MachinePage() {
                               name={`${t('analytics.series.disk')} SMA`}
                               isAnimationActive={false}
                             />
+                          )}
+                          {/* Bollinger bands (±2σ) — shown alongside SMA */}
+                          {showSmoothing && selectedSeries.cpu && (
+                            <>
+                              <Line type="monotone" dataKey="bbCpuUpper" stroke="#22d3ee" strokeWidth={1} strokeOpacity={0.3} strokeDasharray="2 5" dot={false} legendType="none" isAnimationActive={false} />
+                              <Line type="monotone" dataKey="bbCpuLower" stroke="#22d3ee" strokeWidth={1} strokeOpacity={0.3} strokeDasharray="2 5" dot={false} legendType="none" isAnimationActive={false} />
+                            </>
+                          )}
+                          {showSmoothing && selectedSeries.ram && (
+                            <>
+                              <Line type="monotone" dataKey="bbRamUpper" stroke="#a855f7" strokeWidth={1} strokeOpacity={0.3} strokeDasharray="2 5" dot={false} legendType="none" isAnimationActive={false} />
+                              <Line type="monotone" dataKey="bbRamLower" stroke="#a855f7" strokeWidth={1} strokeOpacity={0.3} strokeDasharray="2 5" dot={false} legendType="none" isAnimationActive={false} />
+                            </>
+                          )}
+                          {showSmoothing && selectedSeries.disk && (
+                            <>
+                              <Line type="monotone" dataKey="bbDiskUpper" stroke="#f59e0b" strokeWidth={1} strokeOpacity={0.3} strokeDasharray="2 5" dot={false} legendType="none" isAnimationActive={false} />
+                              <Line type="monotone" dataKey="bbDiskLower" stroke="#f59e0b" strokeWidth={1} strokeOpacity={0.3} strokeDasharray="2 5" dot={false} legendType="none" isAnimationActive={false} />
+                            </>
                           )}
                           <Brush
                             dataKey="timestamp"
@@ -1690,6 +1812,7 @@ function ForecastStat({
   tone,
   icon,
   accent = 'neutral',
+  confidence,
 }: {
   title: string
   value: string
@@ -1697,6 +1820,7 @@ function ForecastStat({
   tone: Tone
   icon: ReactNode
   accent?: 'cpu' | 'ram' | 'disk' | 'neutral'
+  confidence?: ConfidenceLabel | null
 }) {
   const accentClasses: Record<typeof accent, string> = {
     cpu: 'border-cyan-400/60 bg-cyan-500/5 text-cyan-50',
@@ -1713,18 +1837,43 @@ function ForecastStat({
     muted: '',
   }
 
+  const confColor: Record<ConfidenceLabel, string> = {
+    high: 'bg-emerald-500',
+    medium: 'bg-amber-400',
+    low: 'bg-slate-600',
+  }
+  const confWidth: Record<ConfidenceLabel, string> = {
+    high: 'w-full',
+    medium: 'w-1/2',
+    low: 'w-1/4',
+  }
+
   return (
     <div className={cn("rounded-lg border p-4 transition-colors", accentClasses[accent], toneClasses[tone])}>
       <div className="flex items-center gap-3">
         <div className="h-10 w-10 rounded-lg border border-white/10 bg-black/10 flex items-center justify-center">
           {icon}
         </div>
-        <div className="space-y-1">
+        <div className="space-y-1 flex-1 min-w-0">
           <p className="text-xs uppercase tracking-[0.18em] text-white/70 font-mono">{title}</p>
           <p className="text-base font-semibold text-white leading-snug break-words">{value}</p>
           <p className="text-sm text-white/70 leading-snug">{detail}</p>
         </div>
       </div>
+      {confidence && (
+        <div className="mt-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">R²</span>
+            <span className={cn(
+              "text-[10px] font-mono uppercase tracking-wider",
+              confidence === 'high' ? 'text-emerald-400' : confidence === 'medium' ? 'text-amber-400' : 'text-slate-500'
+            )}>{confidence}</span>
+          </div>
+          <div className="w-full h-1 rounded-full bg-white/10 overflow-hidden">
+            <div className={cn("h-full rounded-full transition-all duration-500", confColor[confidence], confWidth[confidence])} />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1784,94 +1933,7 @@ function UtilizationTile({
   )
 }
 
-interface RegressionResult {
-  slopePerHour: number
-  intercept: number
-  origin: number
-}
-
-interface ForecastResult {
-  eta: Date
-  hoursRemaining: number
-  threshold: number
-  slopePerHour: number
-}
-
-function calculateSMA(points: HistoricalMetric[], key: UsageKey, windowSize: number) {
-  if (!points.length) return [] as Array<number | null>
-  const result: Array<number | null> = Array(points.length).fill(null)
-  let windowSum = 0
-  for (let i = 0; i < points.length; i++) {
-    windowSum += points[i][key]
-    if (i >= windowSize) {
-      windowSum -= points[i - windowSize][key]
-    }
-    if (i >= windowSize - 1) {
-      result[i] = windowSum / windowSize
-    }
-  }
-  return result
-}
-
-function calculateRegression(points: HistoricalMetric[], key: UsageKey): RegressionResult | null {
-  if (points.length < 2) return null
-  const timestamps = points.map((point) => new Date(point.timestamp).getTime())
-  const origin = timestamps[0]
-  const xs = timestamps.map((t) => (t - origin) / 3600000) // hours
-  const ys = points.map((point) => point[key])
-
-  const n = xs.length
-  const sumX = xs.reduce((a, b) => a + b, 0)
-  const sumY = ys.reduce((a, b) => a + b, 0)
-  const sumXY = xs.reduce((acc, x, idx) => acc + x * ys[idx], 0)
-  const sumX2 = xs.reduce((acc, x) => acc + x * x, 0)
-
-  const denominator = n * sumX2 - sumX * sumX
-  if (denominator === 0) return null
-
-  const slopePerHour = (n * sumXY - sumX * sumY) / denominator
-  const intercept = (sumY - slopePerHour * sumX) / n
-
-  return { slopePerHour, intercept, origin }
-}
-
-function forecastThreshold(points: HistoricalMetric[], key: UsageKey, threshold: number): ForecastResult | null {
-  if (!points.length) return null
-  const regression = calculateRegression(points, key)
-  if (!regression || regression.slopePerHour <= 0) return null
-
-  const latest = points[points.length - 1]?.[key]
-  if (latest === undefined || latest >= threshold) return null
-
-  const hoursToThreshold = (threshold - regression.intercept) / regression.slopePerHour
-  const etaMs = regression.origin + hoursToThreshold * 3600000
-
-  if (!isFinite(hoursToThreshold) || etaMs < Date.now()) return null
-
-  return {
-    eta: new Date(etaMs),
-    hoursRemaining: hoursToThreshold,
-    threshold,
-    slopePerHour: regression.slopePerHour,
-  }
-}
-
-function calculateRateOfChange(points: HistoricalMetric[], key: UsageKey) {
-  if (points.length < 2) return 0
-  const newer = points[points.length - 1]
-  const older = points[points.length - 2]
-  const delta = newer[key] - older[key]
-  const deltaHours = (new Date(newer.timestamp).getTime() - new Date(older.timestamp).getTime()) / 3600000
-  if (!deltaHours) return 0
-  return delta / deltaHours
-}
-
-function calculatePercentile(points: HistoricalMetric[], key: UsageKey, percentile: number) {
-  if (!points.length) return null
-  const values = points.map((p) => p[key]).sort((a, b) => a - b)
-  const index = Math.min(values.length - 1, Math.floor(percentile * (values.length - 1)))
-  return values[index]
-}
+// RegressionResult, ForecastResult, UsageKey are imported from @/lib/analytics
 
 function formatSlopePerDay(slopePerHour: number, t: any = null) {
   const perDay = slopePerHour * 24

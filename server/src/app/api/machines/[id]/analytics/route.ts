@@ -17,18 +17,30 @@ function parseRange(rangeParam: string | null) {
   return { rangeKey: '7d', hours: RANGE_TO_HOURS['7d'] }
 }
 
+interface BucketedMetric extends Metric {
+  peakCpu: number
+  peakRam: number
+  peakDisk: number
+}
+
 function bucketAverage(points: Metric[], bucketSize: number) {
   if (bucketSize <= 1) {
-    return { points, bucketSize }
+    const enriched: BucketedMetric[] = points.map((p) => ({
+      ...p,
+      peakCpu: p.cpuUsage,
+      peakRam: p.ramUsage,
+      peakDisk: p.diskUsage,
+    }))
+    return { points: enriched, bucketSize }
   }
 
-  const averaged: Metric[] = []
+  const averaged: BucketedMetric[] = []
 
   for (let i = 0; i < points.length; i += bucketSize) {
     const slice = points.slice(i, i + bucketSize)
     const base = slice[slice.length - 1]
 
-    const avg = {
+    const avg: BucketedMetric = {
       ...base,
       cpuUsage: average(slice, 'cpuUsage'),
       ramUsage: average(slice, 'ramUsage'),
@@ -38,6 +50,9 @@ function bucketAverage(points: Metric[], bucketSize: number) {
       diskTotal: average(slice, 'diskTotal'),
       diskUsed: average(slice, 'diskUsed'),
       uptime: Math.round(average(slice, 'uptime')),
+      peakCpu: Math.max(...slice.map((p) => p.cpuUsage)),
+      peakRam: Math.max(...slice.map((p) => p.ramUsage)),
+      peakDisk: Math.max(...slice.map((p) => p.diskUsage)),
     }
 
     averaged.push(avg)
@@ -68,7 +83,7 @@ export async function GET(
     )
 
     const startTime = new Date(Date.now() - rangeData.hours * 60 * 60 * 1000)
-    const fetchCap = Math.min(maxPoints * 8, 5000)
+    const fetchCap = Math.min(maxPoints * 14, 10_000)
 
     const metrics = await prisma.metric.findMany({
       where: {
@@ -95,7 +110,7 @@ export async function GET(
     const bucketSize = Math.max(1, Math.ceil(ordered.length / maxPoints))
     const { points, bucketSize: appliedBucket } = bucketAverage(ordered, bucketSize)
 
-    const serialized = points.map((point) => ({
+    const serialized = (points as BucketedMetric[]).map((point) => ({
       id: point.id,
       machineId: point.machineId,
       cpuUsage: point.cpuUsage,
@@ -106,6 +121,9 @@ export async function GET(
       diskTotal: point.diskTotal,
       diskUsed: point.diskUsed,
       uptime: point.uptime,
+      peakCpu: point.peakCpu,
+      peakRam: point.peakRam,
+      peakDisk: point.peakDisk,
       timestamp: point.timestamp instanceof Date ? point.timestamp.toISOString() : new Date(point.timestamp).toISOString(),
     }))
 
