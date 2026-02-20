@@ -38,27 +38,28 @@ export async function GET(req: NextRequest) {
     if (filters.to) where.createdAt.lte = filters.to
   }
 
-  const logs = await prisma.auditLog.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: filters.limit,
-    skip: filters.offset,
-    include: {
-      machine: {
-        select: {
-          hostname: true,
-          ip: true,
+  const [logs, total] = await Promise.all([
+    prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: filters.limit,
+      skip: filters.offset,
+      include: {
+        machine: {
+          select: {
+            hostname: true,
+            ip: true,
+          },
+        },
+        user: {
+          select: {
+            username: true,
+          },
         },
       },
-      user: {
-        select: {
-          username: true,
-        },
-      },
-    },
-  })
-
-  const total = await prisma.auditLog.count({ where })
+    }),
+    prisma.auditLog.count({ where })
+  ])
 
   return NextResponse.json({ logs, total, limit: filters.limit, offset: filters.offset })
 }

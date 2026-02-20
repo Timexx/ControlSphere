@@ -21,6 +21,7 @@ type OverviewItem = {
   lastScanAt: string | null
   summary: any
   securityUpdates?: number
+  vulnerabilities?: { critical: number; high: number; medium: number; low: number; total: number }
 }
 
 export default function SecurityOverviewPage() {
@@ -119,15 +120,36 @@ export default function SecurityOverviewPage() {
   }, [cveList, cveSearch, cveSeverityFilter])
 
   useEffect(() => {
-    loadData()
-    loadCveState()
+    // Load both in parallel on mount
+    Promise.all([loadData(), loadCveState()])
     
-    // Auto-refresh every 30 seconds to keep timestamps current
-    const interval = setInterval(loadData, 30000)
-    const cveInterval = setInterval(loadCveState, 60000)
+    // Only poll when tab is visible
+    let interval: NodeJS.Timeout | null = null
+    let cveInterval: NodeJS.Timeout | null = null
+    
+    const startPolling = () => {
+      interval = setInterval(loadData, 30000)
+      cveInterval = setInterval(loadCveState, 60000)
+    }
+    const stopPolling = () => {
+      if (interval) clearInterval(interval)
+      if (cveInterval) clearInterval(cveInterval)
+    }
+    
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopPolling()
+      } else {
+        loadData()
+        startPolling()
+      }
+    }
+    
+    startPolling()
+    document.addEventListener('visibilitychange', handleVisibility)
     return () => {
-      clearInterval(interval)
-      clearInterval(cveInterval)
+      stopPolling()
+      document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [])
 
@@ -162,6 +184,28 @@ export default function SecurityOverviewPage() {
               label={t('badges.open', { count: items.filter((m) => m.securityStatus !== 'good').length })}
               tone="warn"
             />
+            {(() => {
+              const totalCritical = items.reduce((s, m) => s + (m.vulnerabilities?.critical || 0), 0)
+              const totalHigh = items.reduce((s, m) => s + (m.vulnerabilities?.high || 0), 0)
+              return (
+                <>
+                  {totalCritical > 0 && (
+                    <StatusBadge
+                      icon={<ShieldAlert className="h-4 w-4" />}
+                      label={`${totalCritical} Critical`}
+                      tone="critical"
+                    />
+                  )}
+                  {totalHigh > 0 && (
+                    <StatusBadge
+                      icon={<ShieldAlert className="h-4 w-4" />}
+                      label={`${totalHigh} High`}
+                      tone="warn"
+                    />
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>
 
@@ -418,6 +462,33 @@ function SecurityCard({ item, t, dateLocale }: { item: OverviewItem; t: ReturnTy
           <span>{t('cards.noScan')}</span>
         )}
       </div>
+      {/* Vulnerability Severity Badges */}
+      {item.vulnerabilities && item.vulnerabilities.total > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+          {item.vulnerabilities.critical > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-rose-500 bg-rose-500/20 text-rose-200 text-[11px] font-semibold">
+              <ShieldAlert className="h-3 w-3" />
+              {item.vulnerabilities.critical} Critical
+            </span>
+          )}
+          {item.vulnerabilities.high > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-orange-500 bg-orange-500/20 text-orange-200 text-[11px] font-semibold">
+              <ShieldAlert className="h-3 w-3" />
+              {item.vulnerabilities.high} High
+            </span>
+          )}
+          {item.vulnerabilities.medium > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-500 bg-amber-500/20 text-amber-200 text-[11px] font-semibold">
+              {item.vulnerabilities.medium} Medium
+            </span>
+          )}
+          {item.vulnerabilities.low > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-slate-600 bg-slate-700/30 text-slate-300 text-[11px] font-semibold">
+              {item.vulnerabilities.low} Low
+            </span>
+          )}
+        </div>
+      )}
     </Link>
   )
 }

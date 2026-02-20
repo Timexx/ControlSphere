@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
+import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
 import { scanPackages } from '@/services/vulnerability-scanner'
 import { clearScanProgress } from '@/lib/scan-progress-store'
 
@@ -108,36 +109,43 @@ export async function POST(request: NextRequest) {
     const currentPackageNames = new Set<string>()
     const scanTime = new Date()
 
+    // Batch upserts in a single transaction to avoid N+1
+    const upsertOps = []
     for (const pkg of packages) {
       if (!pkg?.name || !pkg?.version) continue
-
       currentPackageNames.add(pkg.name)
-
-      await prisma.vMPackage.upsert({
-        where: {
-          machineId_name: {
+      upsertOps.push(
+        prisma.vMPackage.upsert({
+          where: {
+            machineId_name: {
+              machineId,
+              name: pkg.name
+            }
+          },
+          update: {
+            version: pkg.version,
+            manager: pkg.manager || null,
+            status: pkg.status || 'installed',
+            cveIds: pkg.cveIds ? JSON.stringify(pkg.cveIds) : null,
+            lastSeen: scanTime,
+            scanId: scan.id
+          },
+          create: {
             machineId,
-            name: pkg.name
+            name: pkg.name,
+            version: pkg.version,
+            manager: pkg.manager || null,
+            status: pkg.status || 'installed',
+            cveIds: pkg.cveIds ? JSON.stringify(pkg.cveIds) : null,
+            scanId: scan.id
           }
-        },
-        update: {
-          version: pkg.version,
-          manager: pkg.manager || null,
-          status: pkg.status || 'installed',
-          cveIds: pkg.cveIds ? JSON.stringify(pkg.cveIds) : null,
-          lastSeen: scanTime,
-          scanId: scan.id
-        },
-        create: {
-          machineId,
-          name: pkg.name,
-          version: pkg.version,
-          manager: pkg.manager || null,
-          status: pkg.status || 'installed',
-          cveIds: pkg.cveIds ? JSON.stringify(pkg.cveIds) : null,
-          scanId: scan.id
-        }
-      })
+        })
+      )
+    }
+
+    // Execute all upserts in batches of 50 within a transaction
+    for (let i = 0; i < upsertOps.length; i += 50) {
+      await prisma.$transaction(upsertOps.slice(i, i + 50))
     }
 
     // Remove packages that were not in this scan (no longer installed)
@@ -393,13 +401,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (eventsToCreate.length > 0) {
-      // Create events one by one to get their real IDs for real-time updates
-      for (const evtData of eventsToCreate) {
-        const newEvent = await prisma.securityEvent.create({
-          data: evtData
-        })
-        
-        // Emit real-time security event with the REAL database ID
+      // Batch create events in a transaction, then emit real-time updates
+      const createdEvents = await prisma.$transaction(
+        eventsToCreate.map(evtData => prisma.securityEvent.create({ data: evtData }))
+      )
+      
+      for (const newEvent of createdEvents) {
         realtimeEvents.emitSecurityEvent(machineId, {
           id: newEvent.id,
           type: newEvent.type,
@@ -410,6 +417,9 @@ export async function POST(request: NextRequest) {
         })
       }
     }
+
+    // Refresh in-memory cache so dashboard cards show current event counts
+    await refreshSecurityCacheForMachine(prisma, machineId)
 
     // Emit scan completed event for real-time update
     realtimeEvents.emitScanCompleted(machineId, scan.id, actualSummary)

@@ -12,6 +12,7 @@ import { MessageRouter } from '../protocol/router/MessageRouter'
 import { OutputNormalizer } from '../protocol/normalizer/OutputNormalizer'
 import { SecureRemoteTerminalService } from '../domain/services/SecureRemoteTerminalService'
 import { SecretEncryptionService } from '../infrastructure/crypto/SecretEncryptionService'
+import { stateCache } from '../lib/state-cache'
 
 const TEXT_DECODER = new TextDecoder('utf-8', { fatal: false })
 function parseInterval(value: string | undefined, fallback: number): number {
@@ -57,8 +58,9 @@ function sanitizeMachine(machine: any): any {
 }
 
 async function updatePorts(prisma: PrismaClient, machineId: string, ports: any[]): Promise<void> {
-  for (const portData of ports) {
-    await prisma.port.upsert({
+  // Batch all port upserts + stale cleanup in a single transaction
+  const upsertOps = ports.map((portData) =>
+    prisma.port.upsert({
       where: {
         machineId_port_proto: {
           machineId,
@@ -79,16 +81,18 @@ async function updatePorts(prisma: PrismaClient, machineId: string, ports: any[]
         state: portData.state
       }
     })
-  }
+  )
 
   const currentPorts = ports.map((p) => ({ port: p.port, proto: p.proto }))
-  await prisma.port.deleteMany({
+  const deleteOp = prisma.port.deleteMany({
     where: {
       machineId,
       NOT: { OR: currentPorts },
       lastSeen: { lt: new Date(Date.now() - 120000) }
     }
   })
+
+  await prisma.$transaction([...upsertOps, deleteOp])
 }
 
 /**
@@ -293,6 +297,7 @@ export class AgentConnectionManager {
         }
         try {
           await this.prisma.machine.update({ where: { id: machineId }, data: { status: 'offline' } })
+          stateCache.setOffline(machineId)
           this.broadcast({ type: 'machine_status_changed', machineId, status: 'offline' })
         } catch (error) {
           this.logger.error('AgentDisconnectUpdateFailed', { error: (error as Error).message })
@@ -364,6 +369,11 @@ export class AgentConnectionManager {
         }
       })
       this.broadcast({ type: 'machine_status_changed', machineId: machine.id, status: 'online' })
+      stateCache.upsertMachine({
+        id: machine.id, hostname: machine.hostname, ip: machine.ip,
+        osInfo: machine.osInfo, status: machine.status, lastSeen: machine.lastSeen,
+        notes: (machine as any).notes ?? null, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
+      })
     } else {
       machine = await this.prisma.machine.create({
         data: {
@@ -376,6 +386,11 @@ export class AgentConnectionManager {
         }
       })
       this.broadcast({ type: 'machine_registered', machine: sanitizeMachine(machine) })
+      stateCache.upsertMachine({
+        id: machine.id, hostname: machine.hostname, ip: machine.ip,
+        osInfo: machine.osInfo, status: machine.status, lastSeen: machine.lastSeen,
+        notes: (machine as any).notes ?? null, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
+      })
     }      if (ws) {
         ws.send(JSON.stringify({ type: 'registered', machineId: machine.id }))
       }
@@ -413,6 +428,7 @@ export class AgentConnectionManager {
           where: { id: machineId },
           data: { status: 'online', lastSeen: new Date() }
         })
+        stateCache.updateMachineStatus(machineId, 'online', new Date())
         state.statusAt = now
       }
 
@@ -430,11 +446,24 @@ export class AgentConnectionManager {
             uptime: data.metrics.uptime || 0
           }
         })
+        stateCache.updateMetric(machineId, {
+          cpuUsage: data.metrics.cpuUsage || 0,
+          ramUsage: data.metrics.ramUsage || 0,
+          ramTotal: data.metrics.ramTotal || 0,
+          ramUsed: data.metrics.ramUsed || 0,
+          diskUsage: data.metrics.diskUsage || 0,
+          diskTotal: data.metrics.diskTotal || 0,
+          diskUsed: data.metrics.diskUsed || 0,
+          uptime: data.metrics.uptime || 0
+        })
         state.metricsAt = now
       }
 
       if (Array.isArray(data.ports) && data.ports.length > 0 && now - state.portsAt >= HEARTBEAT_PORTS_INTERVAL_MS) {
         await updatePorts(this.prisma, machineId, data.ports)
+        stateCache.updatePorts(machineId, data.ports.map((p: any) => ({
+          port: p.port, proto: p.proto, service: p.service, state: p.state
+        })))
         state.portsAt = now
       }
 
@@ -557,14 +586,17 @@ export class AgentConnectionManager {
       }
     }
 
-    const normalized = this.normalizer.normalize(output)
-
-    if (normalized.text) {
+    // Terminal PTY output is passed through raw to xterm.js which is a full
+    // terminal emulator and handles all control characters and ANSI sequences
+    // natively. The OutputNormalizer must NOT be used here because it strips
+    // essential control characters (BS 0x08, BEL 0x07, etc.) that are required
+    // for proper terminal behavior (backspace, cursor movement, etc.).
+    if (output) {
       this.broadcast({
         type: 'terminal_output',
         machineId,
         sessionId,
-        output: normalized.text,
+        output,
         timestamp: new Date()
       })
     }
@@ -572,8 +604,7 @@ export class AgentConnectionManager {
     this.logger.debug('TerminalOutputBroadcast', {
       machineId,
       sessionId,
-      outputSize: normalized.text.length,
-      isBinary: normalized.isBinary
+      outputSize: (output || '').length
     })
   }
 

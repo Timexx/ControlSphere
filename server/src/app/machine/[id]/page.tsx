@@ -161,7 +161,12 @@ export default function MachinePage() {
   const rebootingRef = useRef(false)
   const executingRef = useRef<string | null>(null)
   const [pendingCriticalCommand, setPendingCriticalCommand] = useState<string | null>(null)
-  const [securitySummary, setSecuritySummary] = useState<{ openEvents: number; highestSeverity: string | null }>({ openEvents: 0, highestSeverity: null })
+  const [securitySummary, setSecuritySummary] = useState<{
+    openEvents: number
+    highestSeverity: string | null
+    securityUpdates: number
+    vulnerabilities: { critical: number; high: number; medium: number; low: number; total: number }
+  }>({ openEvents: 0, highestSeverity: null, securityUpdates: 0, vulnerabilities: { critical: 0, high: 0, medium: 0, low: 0, total: 0 } })
   const [notesDraft, setNotesDraft] = useState('')
   const [notesDirty, setNotesDirty] = useState(false)
   const [notesSaving, setNotesSaving] = useState(false)
@@ -370,7 +375,10 @@ export default function MachinePage() {
 
   const fetchMachine = async () => {
     try {
-      const res = await fetch(`/api/machines/${params.id}`)
+      const [res, secRes] = await Promise.all([
+        fetch(`/api/machines/${params.id}`),
+        fetch(`/api/vms/${params.id}/security`).catch(() => null)
+      ])
       
       // Check if unauthorized (expired cookie)
       if (res.status === 401) {
@@ -385,30 +393,46 @@ export default function MachinePage() {
       const data = await res.json()
       setMachine(data.machine)
       
-      // Also fetch security summary
-      if (data.machine?.id) {
+      // Process security summary from parallel fetch
+      if (secRes && secRes.ok) {
         try {
-          const secRes = await fetch(`/api/vms/${data.machine.id}/security`)
-          if (secRes.ok) {
-            const secData = await secRes.json()
-            const openEvents = secData.openEvents || 0
-            const events = secData.events || []
-            const severityOrder = ['info', 'low', 'medium', 'high', 'critical']
-            let highestSeverity = 'info'
-            for (const evt of events) {
-              if (evt.status === 'open' || evt.status === 'ack') {
-                if (severityOrder.indexOf(evt.severity) > severityOrder.indexOf(highestSeverity)) {
-                  highestSeverity = evt.severity
-                }
+          const secData = await secRes.json()
+          const openEvents = secData.openEvents || 0
+          const events = secData.events || []
+          const vulnerabilities = secData.vulnerabilities || []
+          const severityOrder = ['info', 'low', 'medium', 'high', 'critical']
+          let highestSeverity = 'info'
+          for (const evt of events) {
+            if (evt.status === 'open' || evt.status === 'ack') {
+              if (severityOrder.indexOf(evt.severity) > severityOrder.indexOf(highestSeverity)) {
+                highestSeverity = evt.severity
               }
             }
-            setSecuritySummary({
-              openEvents,
-              highestSeverity: openEvents > 0 ? highestSeverity : null
-            })
           }
+          // Compute vulnerability breakdown
+          const vulnCounts = { critical: 0, high: 0, medium: 0, low: 0, total: vulnerabilities.length }
+          for (const v of vulnerabilities) {
+            const sev = (v.cve?.severity || '').toLowerCase()
+            if (sev === 'critical') vulnCounts.critical++
+            else if (sev === 'high') vulnCounts.high++
+            else if (sev === 'medium') vulnCounts.medium++
+            else vulnCounts.low++
+          }
+          // Count security update packages from lastScan summary or ports
+          const scanSummary = secData.lastScan?.summary
+          let securityUpdates = 0
+          if (scanSummary) {
+            const parsed = typeof scanSummary === 'string' ? JSON.parse(scanSummary) : scanSummary
+            securityUpdates = parsed?.securityUpdates ?? 0
+          }
+          setSecuritySummary({
+            openEvents,
+            highestSeverity: openEvents > 0 ? highestSeverity : null,
+            securityUpdates,
+            vulnerabilities: vulnCounts
+          })
         } catch (secError) {
-          console.error('Failed to fetch security summary:', secError)
+          console.error('Failed to parse security summary:', secError)
         }
       }
     } catch (error) {
@@ -753,6 +777,36 @@ export default function MachinePage() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              {/* Vulnerability Severity Badges */}
+              {securitySummary.vulnerabilities.critical > 0 && (
+                <a
+                  href={`/security/${machine.id}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-rose-500 bg-rose-500/20 text-rose-200 text-xs font-semibold transition-colors hover:opacity-80"
+                  title={t('header.securityLink')}
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  <span>{securitySummary.vulnerabilities.critical} Critical</span>
+                </a>
+              )}
+              {securitySummary.vulnerabilities.high > 0 && (
+                <a
+                  href={`/security/${machine.id}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-orange-500 bg-orange-500/20 text-orange-200 text-xs font-semibold transition-colors hover:opacity-80"
+                  title={t('header.securityLink')}
+                >
+                  <ShieldAlert className="h-3.5 w-3.5" />
+                  <span>{securitySummary.vulnerabilities.high} High</span>
+                </a>
+              )}
+              {securitySummary.vulnerabilities.medium > 0 && (
+                <a
+                  href={`/security/${machine.id}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-amber-500 bg-amber-500/20 text-amber-200 text-xs font-semibold transition-colors hover:opacity-80"
+                  title={t('header.securityLink')}
+                >
+                  <span>{securitySummary.vulnerabilities.medium} Medium</span>
+                </a>
+              )}
               {/* Security Events Badge */}
               {securitySummary.openEvents > 0 && (
                 <a
@@ -771,6 +825,17 @@ export default function MachinePage() {
                 >
                   <ShieldAlert className="h-4 w-4" />
                   <span>{t('header.securityBadge', { count: securitySummary.openEvents })}</span>
+                </a>
+              )}
+              {/* Security Updates Badge */}
+              {securitySummary.securityUpdates > 0 && (
+                <a
+                  href={`/security/${machine.id}`}
+                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-cyan-500/60 bg-cyan-500/10 text-cyan-200 text-xs font-semibold transition-colors hover:opacity-80"
+                  title={t('header.securityLink')}
+                >
+                  <PackageCheck className="h-3.5 w-3.5" />
+                  <span>{securitySummary.securityUpdates} Updates</span>
                 </a>
               )}
               <span className={cn(
@@ -1413,58 +1478,98 @@ export default function MachinePage() {
           </div>
 
           {/* Security Section Link */}
-          <Link
-            href={`/security/${machine.id}`}
-            className="block relative rounded-xl border border-slate-800 bg-[#0d141b] shadow-sm overflow-hidden hover:border-cyan-500/40 transition-colors group"
-          >
-            <div className="flex items-center justify-between p-6">
-              <div className="flex items-center gap-3">
-                <div className={cn(
-                  "h-10 w-10 rounded-lg flex items-center justify-center",
-                  securitySummary.openEvents > 0
-                    ? securitySummary.highestSeverity === 'critical' || securitySummary.highestSeverity === 'high'
-                      ? "bg-rose-500/20 border border-rose-500/40"
-                      : "bg-amber-500/20 border border-amber-500/40"
-                    : "bg-emerald-500/20 border border-emerald-500/40"
-                )}>
-                  <ShieldAlert className={cn(
-                    "h-5 w-5",
-                    securitySummary.openEvents > 0
-                      ? securitySummary.highestSeverity === 'critical' || securitySummary.highestSeverity === 'high'
-                        ? "text-rose-300"
-                        : "text-amber-300"
-                      : "text-emerald-300"
-                  )} />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-white group-hover:text-cyan-100 transition-colors">{t('security.title')}</h2>
-                  <p className="text-sm text-slate-400 mt-1">
-                    {securitySummary.openEvents > 0 
-                      ? t('security.open', { count: securitySummary.openEvents, severity: t(`security.severity.${securitySummary.highestSeverity || 'info'}`) })
-                      : t('security.safe')
-                    }
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                {securitySummary.openEvents > 0 && (
-                  <span className={cn(
-                    "px-3 py-1 rounded-full text-xs font-semibold border",
-                    securitySummary.highestSeverity === 'critical'
-                      ? "border-rose-500 bg-rose-500/20 text-rose-200"
-                      : securitySummary.highestSeverity === 'high'
-                        ? "border-orange-500 bg-orange-500/20 text-orange-200"
-                        : securitySummary.highestSeverity === 'medium'
-                          ? "border-amber-500 bg-amber-500/20 text-amber-200"
-                          : "border-yellow-500 bg-yellow-500/20 text-yellow-200"
-                  )}>
-                    {securitySummary.openEvents}
-                  </span>
+          {(() => {
+            const hasAnyIssue = securitySummary.openEvents > 0 || securitySummary.vulnerabilities.total > 0 || securitySummary.securityUpdates > 0
+            const isCritical = securitySummary.highestSeverity === 'critical' || securitySummary.highestSeverity === 'high' || securitySummary.vulnerabilities.critical > 0 || securitySummary.vulnerabilities.high > 0
+            return (
+              <Link
+                href={`/security/${machine.id}`}
+                className={cn(
+                  "block relative rounded-xl border bg-[#0d141b] shadow-sm overflow-hidden hover:border-cyan-500/40 transition-colors group",
+                  hasAnyIssue
+                    ? isCritical
+                      ? "border-rose-500/50 ring-1 ring-rose-500/20"
+                      : "border-amber-500/50 ring-1 ring-amber-500/20"
+                    : "border-slate-800"
                 )}
-                <ExternalLink className="h-5 w-5 text-slate-400 group-hover:text-cyan-400 transition-colors" />
-              </div>
-            </div>
-          </Link>
+              >
+                <div className="flex items-center justify-between p-6">
+                  <div className="flex items-center gap-3">
+                    <div className={cn(
+                      "h-10 w-10 rounded-lg flex items-center justify-center",
+                      hasAnyIssue
+                        ? isCritical
+                          ? "bg-rose-500/20 border border-rose-500/40"
+                          : "bg-amber-500/20 border border-amber-500/40"
+                        : "bg-emerald-500/20 border border-emerald-500/40"
+                    )}>
+                      <ShieldAlert className={cn(
+                        "h-5 w-5",
+                        hasAnyIssue
+                          ? isCritical ? "text-rose-300" : "text-amber-300"
+                          : "text-emerald-300"
+                      )} />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold text-white group-hover:text-cyan-100 transition-colors">{t('security.title')}</h2>
+                      <p className="text-sm text-slate-400 mt-1">
+                        {hasAnyIssue
+                          ? securitySummary.openEvents > 0
+                            ? t('security.open', { count: securitySummary.openEvents, severity: t(`security.severity.${securitySummary.highestSeverity || 'info'}`) })
+                            : t('security.vulnerabilitiesFound')
+                          : t('security.safe')
+                        }
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <ExternalLink className="h-5 w-5 text-slate-400 group-hover:text-cyan-400 transition-colors" />
+                  </div>
+                </div>
+                {/* Detailed Security Badges */}
+                {hasAnyIssue && (
+                  <div className="flex flex-wrap items-center gap-2 px-6 pb-4">
+                    {securitySummary.vulnerabilities.critical > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-rose-500 bg-rose-500/20 text-rose-200 text-[11px] font-semibold">
+                        <ShieldAlert className="h-3 w-3" />
+                        {securitySummary.vulnerabilities.critical} Critical
+                      </span>
+                    )}
+                    {securitySummary.vulnerabilities.high > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-orange-500 bg-orange-500/20 text-orange-200 text-[11px] font-semibold">
+                        <ShieldAlert className="h-3 w-3" />
+                        {securitySummary.vulnerabilities.high} High
+                      </span>
+                    )}
+                    {securitySummary.vulnerabilities.medium > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-500 bg-amber-500/20 text-amber-200 text-[11px] font-semibold">
+                        {securitySummary.vulnerabilities.medium} Medium
+                      </span>
+                    )}
+                    {securitySummary.openEvents > 0 && (
+                      <span className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-semibold",
+                        securitySummary.highestSeverity === 'critical'
+                          ? "border-rose-500 bg-rose-500/20 text-rose-200"
+                          : securitySummary.highestSeverity === 'high'
+                            ? "border-orange-500 bg-orange-500/20 text-orange-200"
+                            : "border-amber-500 bg-amber-500/20 text-amber-200"
+                      )}>
+                        <ShieldAlert className="h-3 w-3" />
+                        {securitySummary.openEvents} Events
+                      </span>
+                    )}
+                    {securitySummary.securityUpdates > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-cyan-500/60 bg-cyan-500/10 text-cyan-200 text-[11px] font-semibold">
+                        <PackageCheck className="h-3 w-3" />
+                        {securitySummary.securityUpdates} Updates
+                      </span>
+                    )}
+                  </div>
+                )}
+              </Link>
+            )
+          })()}
         </main>
 
         {/* Terminal Modal */}

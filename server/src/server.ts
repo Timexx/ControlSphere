@@ -1,6 +1,5 @@
 import next from 'next'
 import path from 'path'
-import { PrismaClient } from '@prisma/client'
 import { ConsoleLogger } from './types/logger'
 import { HttpServer } from './infrastructure/http/HttpServer'
 import { SecretKeyManager } from './infrastructure/auth/SecretKeyManager'
@@ -14,6 +13,7 @@ import { SecureRemoteTerminalService } from './domain/services/SecureRemoteTermi
 import { orchestrator } from './lib/orchestrator'
 import { SecretEncryptionService } from './infrastructure/crypto/SecretEncryptionService'
 import { startCveMirrorService } from './services/cve-mirror'
+import { stateCache } from './lib/state-cache'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = process.env.HOSTNAME || '0.0.0.0'
@@ -21,7 +21,11 @@ const port = Number(process.env.PORT || 3000)
 
 async function bootstrap(): Promise<void> {
   const logger = new ConsoleLogger()
-  const prisma = new PrismaClient({ log: ['error', 'warn'] })
+  // Use the shared singleton PrismaClient (cached across hot reloads)
+  const { prisma } = await import('./lib/prisma')
+
+  // Warm in-memory state cache before accepting requests
+  await stateCache.warmCache(prisma)
   const registry = new ConnectionRegistry()
 
   const serverConfig: ServerConfig = {
@@ -58,7 +62,8 @@ async function bootstrap(): Promise<void> {
 
   const httpServer = new HttpServer(serverConfig, (req, res) => handler(req, res), logger)
   await httpServer.start()
-  startCveMirrorService(undefined, prisma)
+  // Delay CVE mirror start by 30s so user requests are served immediately on boot
+  setTimeout(() => startCveMirrorService(undefined, prisma), 30_000)
 
   // Initialize SecureRemoteTerminalService
   // Configuration via environment variables:

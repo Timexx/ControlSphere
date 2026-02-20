@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
+import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
 
 // POST: Mark all open security events as resolved for a machine
 export async function POST(
@@ -31,6 +32,9 @@ export async function POST(
         resolvedAt: new Date()
       }
     })
+
+    // Update in-memory cache so dashboard cards reflect the new state
+    await refreshSecurityCacheForMachine(prisma, machineId)
 
     // Emit realtime event to notify clients
     if (result.count > 0) {
@@ -92,6 +96,9 @@ export async function PATCH(
         }
       })
     }
+
+    // Update in-memory cache so dashboard cards reflect the new state
+    await refreshSecurityCacheForMachine(prisma, machineId)
 
     // Emit realtime event if events were resolved
     if (result.count > 0 && status === 'resolved') {

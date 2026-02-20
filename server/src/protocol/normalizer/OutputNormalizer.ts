@@ -123,9 +123,27 @@ export class OutputNormalizer implements IOutputNormalizer {
         printableCount++
         filtered += text[i]
       }
-      // Common control chars to preserve
-      else if (code === 0x0a || code === 0x0d || code === 0x09) {
-        // \n, \r, \t
+      // Terminal control characters to preserve
+      // These are essential for proper terminal emulator behaviour:
+      //   0x07 BEL  - audible bell
+      //   0x08 BS   - backspace / cursor left (critical for character deletion)
+      //   0x09 HT   - horizontal tab
+      //   0x0a LF   - line feed
+      //   0x0b VT   - vertical tab
+      //   0x0c FF   - form feed / clear screen
+      //   0x0d CR   - carriage return
+      //   0x0e SO   - shift out (alternate charset)
+      //   0x0f SI   - shift in  (default charset)
+      else if (
+        code === 0x07 || code === 0x08 || code === 0x09 ||
+        code === 0x0a || code === 0x0b || code === 0x0c ||
+        code === 0x0d || code === 0x0e || code === 0x0f
+      ) {
+        printableCount++
+        filtered += text[i]
+      }
+      // DEL (0x7F) - alternate backspace used by many terminals
+      else if (code === 0x7f) {
         printableCount++
         filtered += text[i]
       }
@@ -145,6 +163,12 @@ export class OutputNormalizer implements IOutputNormalizer {
             i = j
             continue
           }
+          // Incomplete CSI at end of chunk — preserve it so the terminal
+          // emulator can combine it with the next chunk
+          printableCount += text.length - i
+          filtered += text.substring(i)
+          i = text.length
+          continue
         }
 
         // Charset designations like ESC ( B or ESC ) 0
@@ -155,7 +179,11 @@ export class OutputNormalizer implements IOutputNormalizer {
           i = i + 2
           continue
         }
-        // Unrecognized escape - drop it but do not leak trailing chars like "(B"
+        // Lone ESC at end of chunk or other ESC sequence — preserve it so the
+        // terminal emulator can handle it (may be a partial sequence split
+        // across chunks)
+        printableCount++
+        filtered += text[i]
         continue
       }
       // UTF-8 multibyte sequences and Unicode chars (code > 127)

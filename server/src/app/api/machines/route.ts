@@ -1,73 +1,65 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { Prisma } from '@prisma/client'
+import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { stateCache } from '@/lib/state-cache'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const machines = await prisma.machine.findMany({
-      orderBy: { createdAt: 'asc' },
-      select: {
-        id: true,
-        hostname: true,
-        ip: true,
-        osInfo: true,
-        status: true,
-        lastSeen: true
-      }
-    })
-
-    if (machines.length === 0) {
-      return NextResponse.json({ machines: [] })
+    // Serve from in-memory cache when warm (~0 ms)
+    if (stateCache.ready) {
+      const machines = stateCache.getMachines()
+      // Sort by createdAt ascending to match DB path ordering
+      machines.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      const machinesWithSummary = machines.map((m) => ({
+        id: m.id,
+        hostname: m.hostname,
+        ip: m.ip,
+        osInfo: m.osInfo,
+        status: m.status,
+        lastSeen: m.lastSeen,
+        metrics: m.latestMetric ? [m.latestMetric] : [],
+        openSecurityEvents: m.openSecurityEvents,
+        highestSeverity: m.highestSeverity,
+      }))
+      return NextResponse.json({ machines: machinesWithSummary })
     }
 
-    const machineIds = machines.map((m) => m.id)
-
-    type MetricRow = {
-      machineId: string
-      cpuUsage: number
-      ramUsage: number
-      ramTotal: number
-      ramUsed: number
-      diskUsage: number
-      diskTotal: number
-      diskUsed: number
-      uptime: number
-    }
-
-    const [metricsRows, securityEvents] = await Promise.all([
-      prisma.$queryRaw<MetricRow[]>`
-        SELECT m."machineId",
-               m."cpuUsage",
-               m."ramUsage",
-               m."ramTotal",
-               m."ramUsed",
-               m."diskUsage",
-               m."diskTotal",
-               m."diskUsed",
-               m."uptime"
-        FROM "Metric" m
-        INNER JOIN (
-          SELECT "machineId", MAX("timestamp") AS "maxTs"
-          FROM "Metric"
-          WHERE "machineId" IN (${Prisma.join(machineIds)})
-          GROUP BY "machineId"
-        ) latest
-        ON m."machineId" = latest."machineId" AND m."timestamp" = latest."maxTs"
-      `,
+    // Fallback: DB query (only before cache is warm)
+    const [machines, securityEvents] = await Promise.all([
+      prisma.machine.findMany({
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          hostname: true,
+          ip: true,
+          osInfo: true,
+          status: true,
+          lastSeen: true,
+          metrics: {
+            orderBy: { timestamp: 'desc' },
+            take: 1,
+            select: {
+              cpuUsage: true,
+              ramUsage: true,
+              ramTotal: true,
+              ramUsed: true,
+              diskUsage: true,
+              diskTotal: true,
+              diskUsed: true,
+              uptime: true
+            }
+          }
+        }
+      }),
       prisma.securityEvent.findMany({
-        where: {
-          machineId: { in: machineIds },
-          status: { in: ['open', 'ack'] }
-        },
+        where: { status: { in: ['open', 'ack'] } },
         select: { machineId: true, severity: true }
       })
     ])
 
-    const metricsByMachine = new Map<string, MetricRow>()
-    for (const row of metricsRows) {
-      metricsByMachine.set(row.machineId, row)
+    if (machines.length === 0) {
+      return NextResponse.json({ machines: [] })
     }
 
     const severityOrder = ['info', 'low', 'medium', 'high', 'critical']
@@ -82,11 +74,9 @@ export async function GET() {
     }
 
     const machinesWithSummary = machines.map((m) => {
-      const metrics = metricsByMachine.get(m.id)
       const security = securitySummary.get(m.id) || { count: 0, highest: 'info' }
       return {
         ...m,
-        metrics: metrics ? [metrics] : [],
         openSecurityEvents: security.count,
         highestSeverity: security.count > 0 ? security.highest : null
       }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { stateCache } from '@/lib/state-cache'
 
 const severityRank: Record<string, number> = {
   critical: 4,
@@ -12,49 +13,55 @@ const severityRank: Record<string, number> = {
 
 export async function GET() {
   try {
-    const machines = await prisma.machine.findMany({
-      orderBy: { createdAt: 'asc' },
-      select: {
-        id: true,
-        hostname: true,
-        status: true,
-        lastSeen: true
-      }
-    })
+    // Use cache for machine+event data; only hit DB for scan/package info
+    const cachedMachines = stateCache.ready ? stateCache.getMachines() : null
 
-    // Fetch events/scans independently so one failure doesn't kill the entire response
-    let openEvents: Array<{ machineId: string; severity: string }> = []
-    let securityPackages: Array<{ machineId: string }> = []
-
-    try {
-      openEvents = await prisma.securityEvent.findMany({
+    // Fetch machines, events, and packages ALL in parallel
+    const [machines, openEvents, securityPackages] = cachedMachines
+      ? [cachedMachines, [] as Array<{ machineId: string; severity: string }>, await prisma.vMPackage.findMany({ where: { status: 'security_update' }, select: { machineId: true } }).catch(() => [] as Array<{ machineId: string }>)]
+      : await Promise.all([
+      prisma.machine.findMany({
+        orderBy: { createdAt: 'asc' },
+        select: {
+          id: true,
+          hostname: true,
+          status: true,
+          lastSeen: true
+        }
+      }),
+      prisma.securityEvent.findMany({
         where: { status: { in: ['open', 'ack'] } },
         select: { machineId: true, severity: true }
-      })
-    } catch (err) {
-      console.error('Error fetching security events (non-fatal):', err)
-    }
-
-    try {
-      securityPackages = await prisma.vMPackage.findMany({
-        where: {
-          machineId: { in: machines.map(m => m.id) },
-          status: 'security_update'
-        },
+      }).catch((err) => {
+        console.error('Error fetching security events (non-fatal):', err)
+        return [] as Array<{ machineId: string; severity: string }>
+      }),
+      prisma.vMPackage.findMany({
+        where: { status: 'security_update' },
         select: { machineId: true }
+      }).catch((err) => {
+        console.error('Error fetching security update packages (non-fatal):', err)
+        return [] as Array<{ machineId: string }>
       })
-    } catch (err) {
-      console.error('Error fetching security update packages (non-fatal):', err)
-    }
+    ])
 
     const eventSummary = new Map<string, { count: number; highest: string }>()
-    for (const evt of openEvents) {
-      const current = eventSummary.get(evt.machineId) || { count: 0, highest: 'info' }
-      current.count += 1
-      if (severityRank[evt.severity] > (severityRank[current.highest] ?? 0)) {
-        current.highest = evt.severity
+    if (cachedMachines) {
+      // Use cached event summaries directly
+      for (const m of cachedMachines) {
+        if (m.openSecurityEvents > 0) {
+          eventSummary.set(m.id, { count: m.openSecurityEvents, highest: m.highestSeverity ?? 'info' })
+        }
       }
-      eventSummary.set(evt.machineId, current)
+    } else {
+      for (const evt of openEvents) {
+        const current = eventSummary.get(evt.machineId) || { count: 0, highest: 'info' }
+        current.count += 1
+        if (severityRank[evt.severity] > (severityRank[current.highest] ?? 0)) {
+          current.highest = evt.severity
+        }
+        eventSummary.set(evt.machineId, current)
+      }
     }
 
     // Build security update package summary per machine
@@ -67,35 +74,57 @@ export async function GET() {
       securityPackageSummary.set(pkg.machineId, current + 1)
     }
 
-    // Fetch the latest scan per machine using the same method as the detail API
+    // Fetch per-machine vulnerability severity breakdown in a single query
+    const vulnSeverityMap = new Map<string, { critical: number; high: number; medium: number; low: number; total: number }>()
+    try {
+      const machineIds = machines.map(m => m.id)
+      const vulnMatches = await prisma.vulnerabilityMatch.findMany({
+        where: { machineId: { in: machineIds } },
+        select: { machineId: true, cve: { select: { severity: true } } }
+      })
+      for (const vm of vulnMatches) {
+        const entry = vulnSeverityMap.get(vm.machineId) || { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
+        entry.total += 1
+        const sev = (vm.cve?.severity || '').toLowerCase()
+        if (sev === 'critical') entry.critical += 1
+        else if (sev === 'high') entry.high += 1
+        else if (sev === 'medium') entry.medium += 1
+        else entry.low += 1
+        vulnSeverityMap.set(vm.machineId, entry)
+      }
+    } catch (err) {
+      console.error('Error fetching vulnerability severity breakdown (non-fatal):', err)
+    }
+
+    // Fetch the latest scan per machine in a single query (avoid N+1)
     const latestScan = new Map<string, { createdAt: Date; summary: any; scanId: string }>()
     try {
-      await Promise.all(
-        machines.map(async (m) => {
-          const scan = await prisma.packageScan.findFirst({
-            where: { machineId: m.id },
-            orderBy: { createdAt: 'desc' },
-            select: { id: true, machineId: true, createdAt: true, summary: true }
-          })
-          if (scan) {
-            let parsedSummary: any = null
-            if (typeof scan.summary === 'string') {
-              try {
-                parsedSummary = JSON.parse(scan.summary)
-              } catch {
-                parsedSummary = scan.summary
-              }
-            } else {
+      const machineIds = machines.map(m => m.id)
+      const allScans = await prisma.packageScan.findMany({
+        where: { machineId: { in: machineIds } },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, machineId: true, createdAt: true, summary: true }
+      })
+      // Keep only the latest scan per machine
+      for (const scan of allScans) {
+        if (!latestScan.has(scan.machineId)) {
+          let parsedSummary: any = null
+          if (typeof scan.summary === 'string') {
+            try {
+              parsedSummary = JSON.parse(scan.summary)
+            } catch {
               parsedSummary = scan.summary
             }
-            latestScan.set(scan.machineId, {
-              createdAt: scan.createdAt,
-              summary: parsedSummary,
-              scanId: scan.id
-            })
+          } else {
+            parsedSummary = scan.summary
           }
-        })
-      )
+          latestScan.set(scan.machineId, {
+            createdAt: scan.createdAt,
+            summary: parsedSummary,
+            scanId: scan.id
+          })
+        }
+      }
     } catch (err) {
       console.error('Error fetching package scans (non-fatal):', err)
     }
@@ -116,6 +145,8 @@ export async function GET() {
           : 'warn'
       }
 
+      const vulns = vulnSeverityMap.get(m.id) || { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
+
       return {
         machineId: m.id,
         hostname: m.hostname,
@@ -126,7 +157,8 @@ export async function GET() {
         lastScanAt: scanInfo?.createdAt ?? null,
         summary: scanInfo?.summary ?? null,
         // Prefer live package counts (initialized to 0), fall back only if query failed
-        securityUpdates: pkgCount ?? (summarySecurityUpdates !== null ? summarySecurityUpdates : 0)
+        securityUpdates: pkgCount ?? (summarySecurityUpdates !== null ? summarySecurityUpdates : 0),
+        vulnerabilities: vulns
       }
     })
 

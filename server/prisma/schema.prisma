@@ -6,8 +6,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db?connection_limit=1&pool_timeout=20"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -25,14 +25,14 @@ model Machine {
   id              String   @id @default(cuid())
   hostname        String
   ip              String
-  osInfo          String?  // JSON string: { distro, version, kernel }
+  osInfo          String?  @db.Text // JSON string: { distro, version, kernel }
   status          String   @default("offline") // online, offline, error
   lastSeen        DateTime @default(now())
   secretKey       String?  @unique // DEPRECATED: Will be removed after migration
   secretKeyHash   String?  @unique // Hashed secret key for authentication
   secretVersion   Int      @default(1) // For secret rotation support
   secretRotatedAt DateTime? // Timestamp of last secret rotation
-  notes           String?
+  notes           String?  @db.Text
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   
@@ -79,8 +79,8 @@ model Command {
   machineId   String
   machine     Machine  @relation(fields: [machineId], references: [id], onDelete: Cascade)
   
-  command     String
-  output      String?
+  command     String   @db.Text
+  output      String?  @db.Text
   exitCode    Int?
   status      String   @default("pending") // pending, running, completed, failed
   
@@ -138,7 +138,7 @@ model Group {
   name        String
   description String?
   type        String   @default("static") // static | dynamic
-  query       String?
+  query       String?  @db.Text
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -188,9 +188,9 @@ model JobExecution {
   jobId       String
   machineId   String
   status      String   @default("PENDING") // PENDING, RUNNING, SUCCESS, FAILED, SKIPPED, ABORTED
-  output      String?
+  output      String?  @db.Text
   exitCode    Int?
-  error       String?
+  error       String?  @db.Text
   startedAt   DateTime?
   completedAt DateTime?
   createdAt   DateTime @default(now())
@@ -209,7 +209,7 @@ model AuditLog {
   userId    String?
   action    String   // LOGIN, COMMAND_EXEC, SHELL_OPEN, SHELL_CLOSE, AGENT_EVENT, SESSION_CREATED, SESSION_ENDED, RATE_LIMIT_EXCEEDED
   eventType String?  // For secure terminal events: SESSION_CREATED, SESSION_ENDED, RATE_LIMIT_EXCEEDED, REPLAY_DETECTED, HMAC_FAILED
-  details   String?  // JSON string with additional event data
+  details   String?  @db.Text // JSON string with additional event data
   severity  String   @default("info") // info, warn, critical
   createdAt DateTime @default(now())
 
@@ -228,7 +228,7 @@ model VMPackage {
   version    String
   manager    String?  // apt, yum, rpm, apk, etc.
   status     String   @default("installed") // installed, update_available, security_update
-  cveIds     String?
+  cveIds     String?  @db.Text
   lastSeen   DateTime @default(now())
   scanId     String?
 
@@ -245,7 +245,7 @@ model PackageScan {
   id          String      @id @default(cuid())
   machineId   String
   source      String      @default("agent")
-  summary     String?
+  summary     String?  @db.Text
   createdAt   DateTime    @default(now())
 
   machine     Machine     @relation(fields: [machineId], references: [id], onDelete: Cascade)
@@ -271,7 +271,7 @@ model SecurityPolicy {
   targetPath     String
   policyType     String   @default("config") // config, integrity
   expectedHash   String?
-  expectedContent String?
+  expectedContent String?  @db.Text
   intervalSeconds Int     @default(300)
   severity       String   @default("medium") // low, medium, high, critical
   mode           String   @default("observe") // observe, enforce, baseline
@@ -305,8 +305,8 @@ model SecurityEvent {
   policyId   String?
   type       String   // drift, integrity, vulnerability, audit
   severity   String   @default("medium")
-  message    String
-  data       String?
+  message    String   @db.Text
+  data       String?  @db.Text
   status     String   @default("open") // open, ack, resolved
   resolvedAt DateTime?
   resolvedBy String?
@@ -323,11 +323,11 @@ model SecurityEvent {
 
 model Cve {
   id          String   @id // e.g. "CVE-2024-1234" or OSV IDs
-  description String?
+  description String?  @db.Text
   severity    String
   score       Float?
   publishedAt DateTime
-  affected    String?  // JSON payload of affected packages and ranges
+  affected    String?  @db.Text // JSON payload of affected packages and ranges
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   matches     VulnerabilityMatch[]
@@ -355,8 +355,8 @@ model CveMirrorState {
   id        String   @id @default("global")
   lastSync  DateTime
   status    String   // syncing, idle, error
-  error     String?
+  error     String?  @db.Text
   mode      String   @default("full") // full | scoped
-  ecosystems String? // JSON array of mirrored ecosystems
+  ecosystems String?  @db.Text // JSON array of mirrored ecosystems
   totalCves Int?
 }

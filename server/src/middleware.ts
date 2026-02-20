@@ -46,8 +46,7 @@ export async function middleware(request: NextRequest) {
   const acceptLanguage = request.headers.get('accept-language')
   const currentLocaleCookie = request.cookies.get(LOCALE_COOKIE)?.value
 
-  console.log('🔧 Middleware for:', pathname)
-  console.log('  📨 Incoming cookies: session=' + (sessionToken ? 'present' : 'none') + ', NEXT_LOCALE=' + (currentLocaleCookie || 'none'))
+  // Verbose logging removed — was causing I/O overhead on every request
 
   if (isBypassedPath(pathname)) {
     return NextResponse.next()

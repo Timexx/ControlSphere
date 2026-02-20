@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
+import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
 
 function hashSecretKey(secret: string) {
   return crypto.createHash('sha256').update(secret).digest('hex')
@@ -90,6 +91,28 @@ export async function POST(request: NextRequest) {
     let updated = 0
     let suppressed = 0
 
+    // Pre-fetch ALL existing events for this machine ONCE to avoid N+1 queries
+    const allExistingEvents = await prisma.securityEvent.findMany({
+      where: { machineId },
+      orderBy: { createdAt: 'desc' }
+    })
+
+    // Build lookup maps for fast matching
+    const eventsBySourceIp = new Map<string, typeof allExistingEvents[0]>()
+    const eventsByFingerprint = new Map<string, typeof allExistingEvents[0]>()
+    for (const evt of allExistingEvents) {
+      try {
+        const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data
+        if (evt.type === 'failed_auth' && data?.source_ip) {
+          const key = `${evt.type}:${data.source_ip}`
+          if (!eventsBySourceIp.has(key)) eventsBySourceIp.set(key, evt)
+        }
+        if (data?.fingerprint) {
+          if (!eventsByFingerprint.has(data.fingerprint)) eventsByFingerprint.set(data.fingerprint, evt)
+        }
+      } catch {}
+    }
+
     for (const event of events) {
       const derivedPath = event.data?.path as string | undefined || extractPathFromMessage(event.message)
       const fingerprint = event.fingerprint || (derivedPath ? `${event.type}:${derivedPath}` : `${event.type}:${event.message}`)
@@ -99,39 +122,14 @@ export async function POST(request: NextRequest) {
         continue
       }
       
-      // Find existing event by source_ip for failed_auth events (including resolved)
+      // Find existing event using pre-built maps (O(1) instead of O(N))
       let existingEvent = null
       
-      // Get ALL events of this type for this machine (including resolved)
-      const allEvents = await prisma.securityEvent.findMany({
-        where: {
-          machineId,
-          type: event.type
-        },
-        orderBy: { createdAt: 'desc' }
-      })
-
-      // Search for matching event by source_ip or fingerprint
-      for (const evt of allEvents) {
-        try {
-          const data = typeof evt.data === 'string' ? JSON.parse(evt.data) : evt.data
-          
-          // For failed_auth, match by source_ip
-          if (event.type === 'failed_auth' && event.data?.source_ip) {
-            if (data?.source_ip === event.data.source_ip) {
-              existingEvent = evt
-              break
-            }
-          }
-          
-          // Also check fingerprint match
-          if (data?.fingerprint === fingerprint) {
-            existingEvent = evt
-            break
-          }
-        } catch {
-          // Ignore parse errors
-        }
+      if (event.type === 'failed_auth' && event.data?.source_ip) {
+        existingEvent = eventsBySourceIp.get(`${event.type}:${event.data.source_ip}`) || null
+      }
+      if (!existingEvent) {
+        existingEvent = eventsByFingerprint.get(fingerprint) || null
       }
 
       if (existingEvent) {
@@ -190,6 +188,9 @@ export async function POST(request: NextRequest) {
         })
       }
     }
+
+    // Refresh in-memory cache so dashboard cards show current event counts
+    await refreshSecurityCacheForMachine(prisma, machineId)
 
     console.log(`Security events processed for ${machineId}: ${created} created, ${updated} updated`)
 

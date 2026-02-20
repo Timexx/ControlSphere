@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 interface TerminalProps {
@@ -16,7 +17,14 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
   const sessionIdRef = useRef<string | null>(null) // Will be set by server
   const [isReady, setIsReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [mounted, setMounted] = useState(false)
   const hasSpawnedRef = useRef(false)
+
+  // Ensure portal target is available (client-side only)
+  useEffect(() => {
+    setMounted(true)
+    return () => setMounted(false)
+  }, [])
 
   useEffect(() => {
     if (!terminalRef.current || !socket) {
@@ -38,11 +46,14 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
         const { FitAddon } = await import('xterm-addon-fit')
         if (cancelled) return
 
-        // Initialize xterm
+        // Initialize xterm with full native terminal emulation
         const term = new XTerm({
         cursorBlink: true,
+        cursorStyle: 'block',
         fontSize: 14,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        scrollback: 10000,
+        allowProposedApi: true,
         theme: {
           background: '#0f161d',
           foreground: '#d4d4d4',
@@ -112,14 +123,8 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
           document.fonts?.ready?.then(() => fitTerminal()).catch(() => {})
         }
 
-        // Send data to server
+        // Send keyboard data to server (text input, escape sequences, etc.)
         term.onData((data) => {
-        console.log('📝 Terminal input:', {
-          socketReady: socket.readyState === WebSocket.OPEN,
-          readyState: socket.readyState,
-          sessionId: sessionIdRef.current,
-          dataLength: data.length
-        })
         if (socket.readyState === WebSocket.OPEN && sessionIdRef.current) {
           socket.send(JSON.stringify({
             type: 'terminal_input',
@@ -127,15 +132,21 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
             sessionId: sessionIdRef.current,
             data: data,
           }))
-          console.log('✅ Sent terminal_input')
-        } else {
-          if (!sessionIdRef.current) {
-            console.warn('⚠️ No session ID yet, cannot send input')
-          } else {
-            console.warn('⚠️ Socket not ready, cannot send input', { readyState: socket.readyState })
-          }
         }
       })
+
+        // Send binary data to server (some terminals send binary for certain
+        // key combinations). Convert binary string to the same format as onData.
+        term.onBinary((data) => {
+          if (socket.readyState === WebSocket.OPEN && sessionIdRef.current) {
+            socket.send(JSON.stringify({
+              type: 'terminal_input',
+              machineId,
+              sessionId: sessionIdRef.current,
+              data: data,
+            }))
+          }
+        })
 
         // Handle resize
         const handleResize = () => fitTerminal()
@@ -153,19 +164,8 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
           
           // Handle session creation response from server
           if (data.type === 'terminal_session_created') {
-            console.log('✅ Session created by server:', data.sessionId)
             sessionIdRef.current = data.sessionId
             return
-          }
-          
-          // Log terminal messages for debugging
-          if (data.type === 'terminal_output' || data.type === 'terminal_data') {
-            console.log('Terminal received:', {
-              type: data.type,
-              sessionId: data.sessionId,
-              expectedSessionId: sessionIdRef.current,
-              hasData: !!(data.output || data.data)
-            })
           }
           
           // Accept both terminal_output and terminal_data
@@ -177,7 +177,7 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
             }
           }
           } catch (error) {
-            console.error('Terminal message error:', error)
+            // Silently ignore non-JSON messages
           }
         }
 
@@ -221,10 +221,12 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
     return () => {
       cancelled = true
     }
-  }, [machineId, socket])
+  }, [machineId, socket, mounted])
 
-  return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-6">
+  // Render via portal on document.body so the overlay escapes all
+  // parent stacking contexts (AppShell header z-50, sidebar z-40, etc.)
+  const content = (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6" style={{ zIndex: 99999 }}>
       <div className="rounded-xl border border-slate-800 bg-[#0d141b] shadow-lg w-[96vw] max-w-[1600px] h-[88vh] flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
@@ -250,4 +252,7 @@ export default function Terminal({ machineId, socket, onClose }: TerminalProps) 
       </div>
     </div>
   )
+
+  if (!mounted) return null
+  return createPortal(content, document.body)
 }

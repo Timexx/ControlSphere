@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { formatDistanceToNow } from 'date-fns'
 import { de, enUS } from 'date-fns/locale'
-import { Activity, Cpu, HardDrive, MemoryStick, Clock, ShieldAlert } from 'lucide-react'
+import { Activity, Cpu, HardDrive, MemoryStick, Clock, ShieldAlert, PackageCheck } from 'lucide-react'
 import { cn, formatUptime } from '@/lib/utils'
 import AddAgentModal from '@/components/AddAgentModal'
 import AppShell, { BackgroundLayers } from '@/components/AppShell'
@@ -20,6 +20,8 @@ interface Machine {
   lastSeen: string
   openSecurityEvents?: number
   highestSeverity?: string | null
+  securityUpdates?: number
+  vulnerabilities?: { critical: number; high: number; medium: number; low: number; total: number }
   metrics: Array<{
     cpuUsage: number
     ramUsage: number
@@ -42,7 +44,10 @@ export default function DashboardPage() {
 
   const fetchMachines = useCallback(async () => {
     try {
-      const res = await fetch('/api/machines')
+      const [res, secRes] = await Promise.all([
+        fetch('/api/machines'),
+        fetch('/api/security/overview').catch(() => null)
+      ])
 
       if (res.status === 401) {
         window.location.href = '/login'
@@ -50,7 +55,28 @@ export default function DashboardPage() {
       }
 
       const data = await res.json()
-      setMachines(data.machines)
+      let securityMap = new Map<string, { securityUpdates: number; vulnerabilities: { critical: number; high: number; medium: number; low: number; total: number } }>()
+      if (secRes && secRes.ok) {
+        try {
+          const secData = await secRes.json()
+          for (const item of secData.items || []) {
+            securityMap.set(item.machineId, {
+              securityUpdates: item.securityUpdates || 0,
+              vulnerabilities: item.vulnerabilities || { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
+            })
+          }
+        } catch {}
+      }
+
+      const enriched = (data.machines || []).map((m: Machine) => {
+        const sec = securityMap.get(m.id)
+        return {
+          ...m,
+          securityUpdates: sec?.securityUpdates ?? m.securityUpdates ?? 0,
+          vulnerabilities: sec?.vulnerabilities ?? m.vulnerabilities ?? { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
+        }
+      })
+      setMachines(enriched)
     } catch (error) {
       console.error('Failed to fetch machines:', error)
     } finally {
@@ -206,6 +232,46 @@ export default function DashboardPage() {
               label={t('stats.total', { count: machines.length })}
               tone="info"
             />
+            {(() => {
+              const totalCritical = machines.reduce((s, m) => s + (m.vulnerabilities?.critical || 0), 0)
+              const totalHigh = machines.reduce((s, m) => s + (m.vulnerabilities?.high || 0), 0)
+              const totalUpdates = machines.reduce((s, m) => s + (m.securityUpdates || 0), 0)
+              const machinesWithCriticalEvents = machines.filter(m => m.highestSeverity === 'critical').length
+              const machinesWithHighEvents = machines.filter(m => m.highestSeverity === 'high').length
+              const hasCritical = totalCritical > 0 || machinesWithCriticalEvents > 0
+              const hasHigh = totalHigh > 0 || machinesWithHighEvents > 0
+              return (
+                <>
+                  {hasCritical && (
+                    <Link href="/security">
+                      <StatusBadge
+                        icon={<ShieldAlert className="h-4 w-4" />}
+                        label={t('stats.critical', { count: totalCritical > 0 ? totalCritical : machinesWithCriticalEvents })}
+                        tone="critical"
+                      />
+                    </Link>
+                  )}
+                  {hasHigh && (
+                    <Link href="/security">
+                      <StatusBadge
+                        icon={<ShieldAlert className="h-4 w-4" />}
+                        label={t('stats.high', { count: totalHigh > 0 ? totalHigh : machinesWithHighEvents })}
+                        tone="warn"
+                      />
+                    </Link>
+                  )}
+                  {totalUpdates > 0 && (
+                    <Link href="/security">
+                      <StatusBadge
+                        icon={<PackageCheck className="h-4 w-4" />}
+                        label={t('stats.securityUpdates', { count: totalUpdates })}
+                        tone="warn"
+                      />
+                    </Link>
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>
 
@@ -257,6 +323,9 @@ function MachineCard({
   const isOnline = machine.status === 'online'
   const latestMetric = machine.metrics?.[0]
   const hasSecurityEvents = (machine.openSecurityEvents || 0) > 0
+  const vulns = machine.vulnerabilities || { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
+  const secUpdates = machine.securityUpdates || 0
+  const hasSecurityIssues = hasSecurityEvents || vulns.total > 0 || secUpdates > 0
   const lastSeenDate = new Date(machine.lastSeen)
   const lastSeenText = Date.now() - lastSeenDate.getTime() <= 60_000
     ? tMachine('status.live')
@@ -286,21 +355,19 @@ function MachineCard({
 
   const cardBody = (
     <div className={cn(
-      "relative rounded-xl border border-slate-800 bg-[#0d141b] overflow-hidden transition-all duration-150 hover:border-cyan-500/40 cursor-pointer",
-      hasSecurityEvents && "ring-1 ring-rose-500/30"
+      "relative rounded-xl border border-slate-800 bg-[#0d141b] overflow-hidden transition-all duration-150 hover:border-cyan-500/40 cursor-pointer h-full flex flex-col",
+      hasSecurityIssues && "ring-1 ring-rose-500/30"
     )}>
 
       <div className={cn(
-        "relative px-6 py-4 border-b border-slate-800 flex items-start justify-between"
+        "relative px-6 py-4 border-b border-slate-800 flex items-start justify-between min-h-[88px]"
       )}>
         <div className="flex-1 pr-16">
-          <h3 className="text-xl font-semibold text-white">{machine.hostname}</h3>
+          <h3 className="text-xl font-semibold text-white truncate">{machine.hostname}</h3>
           <p className="text-sm text-slate-400">{machine.ip}</p>
-          {osInfo.distro && (
-            <p className="mt-2 text-xs text-slate-500">
-              {osInfo.distro} {osInfo.release}
-            </p>
-          )}
+          <p className="mt-2 text-xs text-slate-500 truncate">
+            {osInfo.distro ? `${osInfo.distro} ${osInfo.release}` : '\u00A0'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <div className={cn(
@@ -311,20 +378,70 @@ function MachineCard({
           )}>
             {isOnline ? t('status.online') : t('status.offline')}
           </div>
-          {hasSecurityEvents && (
-            <div className={cn(
-              "flex items-center gap-1.5 px-2 py-1 rounded-full border text-xs font-semibold",
-              getSeverityColor(machine.highestSeverity)
-            )}>
-              <ShieldAlert className="h-3.5 w-3.5" />
-              <span>{machine.openSecurityEvents}</span>
-            </div>
-          )}
         </div>
       </div>
 
-      {latestMetric && (
-        <div className="relative px-6 py-4 space-y-3">
+      {/* Security Badges Row – always rendered for consistent height */}
+      {hasSecurityIssues ? (
+        <Link
+          href={`/security/${machine.id}`}
+          className="relative flex flex-wrap items-center gap-2 px-6 py-3 border-b border-slate-800 bg-[#0c1219] hover:bg-[#111820] transition-colors min-h-[44px]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Severity badge from events (critical/high/medium) */}
+          {hasSecurityEvents && machine.highestSeverity === 'critical' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-rose-500 bg-rose-500/20 text-rose-200 text-[11px] font-semibold">
+              <ShieldAlert className="h-3 w-3" />
+              {t('badges.severityCritical')}
+            </span>
+          )}
+          {hasSecurityEvents && machine.highestSeverity === 'high' && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-orange-500 bg-orange-500/20 text-orange-200 text-[11px] font-semibold">
+              <ShieldAlert className="h-3 w-3" />
+              {t('badges.severityHigh')}
+            </span>
+          )}
+          {vulns.critical > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-rose-500 bg-rose-500/20 text-rose-200 text-[11px] font-semibold">
+              <ShieldAlert className="h-3 w-3" />
+              {t('badges.critical', { count: vulns.critical })}
+            </span>
+          )}
+          {vulns.high > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-orange-500 bg-orange-500/20 text-orange-200 text-[11px] font-semibold">
+              <ShieldAlert className="h-3 w-3" />
+              {t('badges.high', { count: vulns.high })}
+            </span>
+          )}
+          {vulns.medium > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-amber-500 bg-amber-500/20 text-amber-200 text-[11px] font-semibold">
+              {t('badges.medium', { count: vulns.medium })}
+            </span>
+          )}
+          {hasSecurityEvents && (
+            <span className={cn(
+              "inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-semibold",
+              getSeverityColor(machine.highestSeverity)
+            )}>
+              <ShieldAlert className="h-3 w-3" />
+              {t('badges.events', { count: machine.openSecurityEvents || 0 })}
+            </span>
+          )}
+          {secUpdates > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-cyan-500/60 bg-cyan-500/10 text-cyan-200 text-[11px] font-semibold">
+              <PackageCheck className="h-3 w-3" />
+              {t('badges.updates', { count: secUpdates })}
+            </span>
+          )}
+        </Link>
+      ) : (
+        <div className="relative px-6 py-3 border-b border-slate-800 bg-[#0c1219] min-h-[44px] flex items-center">
+          <span className="text-[11px] text-slate-500 font-mono">{t('badges.noIssues')}</span>
+        </div>
+      )}
+
+      {latestMetric ? (
+        <div className="relative px-6 py-4 space-y-3 flex-1">
           <MetricRow
             icon={<Cpu className="h-4 w-4 text-cyan-300" />}
             label={t('metrics.cpu')}
@@ -353,9 +470,13 @@ function MachineCard({
             </span>
           </div>
         </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center px-6 py-8 text-slate-500 text-sm">
+          {t('status.offline') === machine.status ? t('status.offline') : '—'}
+        </div>
       )}
 
-      <div className="relative px-6 py-3 bg-[#0c1219] border-t border-white/5 text-xs text-slate-400">
+      <div className="relative px-6 py-3 bg-[#0c1219] border-t border-white/5 text-xs text-slate-400 mt-auto">
         {t('lastSeen')}{' '}
         {lastSeenText}
       </div>
@@ -363,7 +484,7 @@ function MachineCard({
   )
 
   return (
-    <Link href={`/machine/${machine.id}`}>
+    <Link href={`/machine/${machine.id}`} className="h-full">
       {cardBody}
     </Link>
   )

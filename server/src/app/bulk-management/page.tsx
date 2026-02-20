@@ -516,8 +516,7 @@ export default function BulkManagementPage() {
   }, [fetchJobs, t])
 
   useEffect(() => {
-    fetchMachines()
-    fetchJobs()
+    Promise.all([fetchMachines(), fetchJobs()])
   }, [fetchMachines, fetchJobs])
 
   useEffect(() => {

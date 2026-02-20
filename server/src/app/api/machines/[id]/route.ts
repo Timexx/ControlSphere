@@ -1,11 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { stateCache } from '@/lib/state-cache'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    // Fast path: serve base data from cache, enrich with commands/links from DB
+    const cached = stateCache.ready ? stateCache.getMachine(params.id) : null
+    if (cached) {
+      const [commands, links] = await Promise.all([
+        prisma.command.findMany({
+          where: { machineId: params.id },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        }),
+        prisma.machineLink.findMany({
+          where: { machineId: params.id },
+          orderBy: { createdAt: 'desc' },
+        }),
+      ])
+      return NextResponse.json({
+        machine: {
+          id: cached.id,
+          hostname: cached.hostname,
+          ip: cached.ip,
+          osInfo: cached.osInfo,
+          status: cached.status,
+          lastSeen: cached.lastSeen,
+          notes: cached.notes,
+          createdAt: cached.createdAt,
+          updatedAt: cached.updatedAt,
+          metrics: cached.latestMetric ? [cached.latestMetric] : [],
+          commands,
+          ports: cached.ports,
+          links,
+        },
+      })
+    }
+
+    // Fallback: full DB query
     const machine = await prisma.machine.findUnique({
       where: { id: params.id },
       select: {
@@ -21,7 +56,17 @@ export async function GET(
         // Explicitly exclude secretKey and secretKeyHash
         metrics: {
           orderBy: { timestamp: 'desc' },
-          take: 50,
+          take: 1,
+          select: {
+            cpuUsage: true,
+            ramUsage: true,
+            ramTotal: true,
+            ramUsed: true,
+            diskUsage: true,
+            diskTotal: true,
+            diskUsed: true,
+            uptime: true
+          }
         },
         commands: {
           orderBy: { createdAt: 'desc' },
@@ -31,7 +76,13 @@ export async function GET(
           orderBy: [
             { port: 'asc' },
             { proto: 'asc' }
-          ]
+          ],
+          select: {
+            port: true,
+            proto: true,
+            service: true,
+            state: true
+          }
         },
         links: {
           orderBy: { createdAt: 'desc' }
@@ -85,6 +136,13 @@ export async function PATCH(
         updatedAt: true
       }
     })
+
+    // Write-through: update cache so subsequent reads are fresh
+    const cached = stateCache.getMachine(params.id)
+    if (cached) {
+      cached.notes = updated.notes
+      cached.updatedAt = updated.updatedAt
+    }
 
     return NextResponse.json({
       id: updated.id,

@@ -1764,13 +1764,17 @@ log "Update complete!"
 func (a *Agent) spawnShell(data SpawnShellData) {
 	log.Printf("Spawning shell for session: %s", data.SessionID)
 
-	// Use bash without readline to avoid bracketed paste mode issues
-	cmd := exec.Command("/bin/bash", "--noediting")
+	// Start a login shell so that full readline support is available
+	// (tab completion, arrow-key history, proper line editing).
+	// Bracketed paste mode is handled correctly by xterm.js on the client.
+	cmd := exec.Command("/bin/bash", "--login")
 	
 	// Set environment variables for proper terminal behavior
 	cmd.Env = append(os.Environ(), 
 		"TERM=xterm-256color",
 		"BASH_SILENCE_DEPRECATION_WARNING=1",
+		"LC_ALL=en_US.UTF-8",
+		"LANG=en_US.UTF-8",
 	)
 
 	// Start with PTY

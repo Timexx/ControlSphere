@@ -272,6 +272,7 @@ const messages = {
       title: 'Security Center',
       open: '{count, plural, one {# event} other {# events}} open • {severity}',
       safe: 'No open events • System secure',
+      vulnerabilitiesFound: 'Vulnerabilities found — view details',
       severity: {
         critical: 'Critical',
         high: 'High',
@@ -799,6 +800,19 @@ const messages = {
     stats: {
       online: '{count} online',
       total: '{count} total',
+      critical: '{count} Critical',
+      high: '{count} High',
+      securityUpdates: '{count} Updates',
+    },
+    badges: {
+      critical: '{count} Critical',
+      high: '{count} High',
+      medium: '{count} Medium',
+      events: '{count, plural, one {# Event} other {# Events}}',
+      updates: '{count, plural, one {# Update} other {# Updates}}',
+      severityCritical: 'Critical',
+      severityHigh: 'High',
+      noIssues: 'No security issues',
     },
     empty: {
       title: 'No systems yet',

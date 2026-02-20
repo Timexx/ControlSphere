@@ -4,16 +4,8 @@
  *
  * This module is CommonJS so it can be required from server.js and imported from TS API routes.
  */
-const { PrismaClient } = require('@prisma/client')
-
-// Reuse a single Prisma client in dev to avoid exhausting connections
-let prisma = global.__orchestrator_prisma
-if (!prisma) {
-  prisma = new PrismaClient({ log: ['error', 'warn'] })
-  if (process.env.NODE_ENV !== 'production') {
-    global.__orchestrator_prisma = prisma
-  }
-}
+// Use the shared singleton PrismaClient from lib/prisma
+const { prisma } = require('./prisma')
 
 const MAX_GLOBAL_CONCURRENCY = 50
 const DISCONNECT_GRACE_MS = 15000 // 15 seconds grace period for command completion after disconnect

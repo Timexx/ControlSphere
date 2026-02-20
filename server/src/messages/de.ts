@@ -272,6 +272,7 @@ const messages = {
       title: 'Security Center',
       open: '{count, plural, one {# Event} other {# Events}} offen • {severity}',
       safe: 'Keine offenen Events • System sicher',
+      vulnerabilitiesFound: 'Schwachstellen gefunden — Details ansehen',
       severity: {
         critical: 'Kritisch',
         high: 'Hoch',
@@ -723,6 +724,19 @@ const messages = {
     stats: {
       online: '{count} online',
       total: '{count} gesamt',
+      critical: '{count} Kritisch',
+      high: '{count} Hoch',
+      securityUpdates: '{count} Updates',
+    },
+    badges: {
+      critical: '{count} Kritisch',
+      high: '{count} Hoch',
+      medium: '{count} Mittel',
+      events: '{count, plural, one {# Event} other {# Events}}',
+      updates: '{count, plural, one {# Update} other {# Updates}}',
+      severityCritical: 'Kritisch',
+      severityHigh: 'Hoch',
+      noIssues: 'Keine Sicherheitsprobleme',
     },
     empty: {
       title: 'Noch keine Systeme',

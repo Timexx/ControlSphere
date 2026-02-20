@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { stateCache } from '@/lib/state-cache'
 
 export async function DELETE(
   request: NextRequest,
@@ -17,6 +18,9 @@ export async function DELETE(
     await prisma.machine.delete({
       where: { id }
     })
+
+    // Remove from cache
+    stateCache.deleteMachine(id)
 
     return NextResponse.json({ success: true })
   } catch (error) {
