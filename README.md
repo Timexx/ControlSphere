@@ -45,30 +45,34 @@ Born from the need to manage servers without the cost of large operators, and ma
 
 ### 🐳 Option A — Docker (recommended for testing & production)
 
-No installation, no prerequisites. PostgreSQL is included.
+Truly zero-config. No `.env` file, no passwords, no prerequisites.
+
+> **[→ docker-compose.yml](docker-compose.yml)** — open, copy, deploy. That's it.
 
 ```bash
-# 1. Copy env template
-cp .env.docker.example .env
-
-# 2. Open .env and set POSTGRES_PASSWORD to a strong password
-
-# 3. Start everything
 docker compose up -d
 ```
 
 Open **http://localhost:3000** — done.
 
-> `JWT_SECRET` and `SESSION_TOKEN_SECRET` are generated automatically on first startup and persisted in a Docker volume. No action needed.
+All secrets (`POSTGRES_PASSWORD`, `JWT_SECRET`, `SESSION_TOKEN_SECRET`) are generated automatically on first startup and persisted in a Docker volume. PostgreSQL is included and runs internally — never exposed to the network.
+
+> **TrueNAS / Portainer / Unraid**: Just paste the `docker-compose.yml` content into your custom app YAML editor and deploy. Nothing else needed.
 
 **Useful Docker commands:**
 ```bash
 docker compose logs -f server       # follow server logs
 docker compose logs -f postgres     # follow database logs
 docker compose down                 # stop
-docker compose down -v              # stop + delete all data
+docker compose down -v              # stop + delete all data (resets secrets)
 docker compose up -d --build        # rebuild after a code change
 ```
+
+**Want to override secrets?** Set any of these as environment variables in a `.env` file or in your container platform:
+- `POSTGRES_PASSWORD` — database password
+- `JWT_SECRET` — JWT signing key
+- `SESSION_TOKEN_SECRET` — session HMAC key
+- `PORT` — host port (default: 3000)
 
 ---
 

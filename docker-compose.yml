@@ -1,22 +1,45 @@
 services:
 
-  # ── PostgreSQL ──────────────────────────────────────────────────────────
+  # -- PostgreSQL ----------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: maintainer
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_DB: maintainer
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - secrets_data:/run/secrets:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U maintainer"]
       interval: 10s
       timeout: 5s
       retries: 5
+    # Not exposed to the host — only reachable from the server container.
 
-  # ── ControlSphere Server (Next.js + WebSocket) ──────────────────────────
+  # -- Init: generate shared secrets once ----------------------------------
+  # Runs before postgres + server start. Creates the shared password file
+  # in the secrets volume if it doesn't exist yet.
+  init-secrets:
+    image: alpine:3.19
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        if [ ! -f /secrets/postgres_password ]; then
+          apk add --no-cache openssl > /dev/null 2>&1
+          PW=$$(openssl rand -base64 24 | tr -d '+/=\n' | head -c 32)
+          echo "$$PW" > /secrets/postgres_password
+          chmod 600 /secrets/postgres_password
+          echo "[init-secrets] Generated postgres_password."
+        else
+          echo "[init-secrets] postgres_password already exists, skipping."
+        fi
+    volumes:
+      - secrets_data:/secrets
+
+  # -- ControlSphere Server (Next.js + WebSocket) -------------------------
   server:
     build:
       context: ./server
@@ -25,20 +48,15 @@ services:
     ports:
       - "${PORT:-3000}:3000"
     environment:
-      DATABASE_URL: "postgresql://maintainer:${POSTGRES_PASSWORD}@postgres:5432/maintainer?schema=public&connection_limit=20"
-      # Optional: override auto-generated secrets by setting these in .env
-      JWT_SECRET: ${JWT_SECRET:-}
-      SESSION_TOKEN_SECRET: ${SESSION_TOKEN_SECRET:-}
+      # All secrets are auto-generated — override via environment if needed.
       NODE_ENV: production
       PORT: 3000
     volumes:
-      # Persists auto-generated JWT_SECRET and SESSION_TOKEN_SECRET across restarts.
-      # Delete this volume only if you want new secrets to be generated.
       - secrets_data:/app/.secrets
-      # Agent binaries served via /downloads – persisted across container restarts.
-      # Place the compiled agent binary here after running ./rebuild-and-deploy-agents.sh
       - agent_downloads:/app/public/downloads
     depends_on:
+      init-secrets:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
 
