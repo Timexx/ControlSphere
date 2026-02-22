@@ -239,7 +239,7 @@ connection_limit = max(10, floor(agents × 0.25))
 
 **Calculate your value before deploying:**
 ```bash
-AGENTS=50   # ← set your agent count
+AGENTS=50
 LIMIT=$(( AGENTS / 4 > 10 ? AGENTS / 4 : 10 ))
 echo "Use connection_limit=${LIMIT}"
 ```
