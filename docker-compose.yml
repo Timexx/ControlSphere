@@ -41,9 +41,12 @@ services:
 
   # -- ControlSphere Server (Next.js + WebSocket) -------------------------
   server:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ghcr.io/timexx/controlsphere:latest
+    # To build locally instead of pulling the image, comment out 'image' and
+    # uncomment the two lines below:
+    # build:
+    #   context: ./server
+    #   dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"

@@ -55,9 +55,9 @@ docker compose up -d
 
 Open **http://localhost:3000** — done.
 
-All secrets (`POSTGRES_PASSWORD`, `JWT_SECRET`, `SESSION_TOKEN_SECRET`) are generated automatically on first startup and persisted in a Docker volume. PostgreSQL is included and runs internally — never exposed to the network.
+All secrets (`POSTGRES_PASSWORD`, `JWT_SECRET`, `SESSION_TOKEN_SECRET`) are generated automatically on first startup and persisted in a Docker volume. PostgreSQL is included and runs internally — never exposed to the network. The server image is pulled directly from GitHub Container Registry — no clone or build required.
 
-> **TrueNAS / Portainer / Unraid**: Just paste the `docker-compose.yml` content into your custom app YAML editor and deploy. Nothing else needed.
+> **TrueNAS / Portainer / Unraid**: Just paste the `docker-compose.yml` content into your custom app YAML editor and deploy. The image is pulled automatically from `ghcr.io/timexx/controlsphere:latest`. Nothing else needed.
 
 **Useful Docker commands:**
 ```bash
