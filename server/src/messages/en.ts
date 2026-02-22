@@ -852,6 +852,22 @@ const messages = {
     },
     lastSeen: 'Last seen:',
   },
+  serverSetup: {
+    eyebrow: 'Server setup',
+    title: 'Set your server URL',
+    subtitle: 'Enter the URL that agents and browsers use to reach this server. Use your LAN IP — not the Docker container IP.',
+    label: 'Server URL',
+    placeholder: 'http://192.168.10.10:3000',
+    hint: 'Examples: http://192.168.10.10:3000  ·  https://controlsphere.example.com  ·  http://truenas.local:3000',
+    detectedHint: 'Auto-detected',
+    save: 'Save and continue',
+    saving: 'Saving...',
+    savedFeedback: 'Saved — redirecting…',
+    footnote: 'You can change this later in the settings.',
+    errors: {
+      saveFailed: 'Could not save the server URL.',
+    },
+  },
 }
 
 export default messages

@@ -39,9 +39,9 @@ export default function LanguageSetupPage() {
         throw new Error(data.error || t('errors.saveFailed'))
       }
 
-      console.log('[LanguageSetup] Success! Redirecting to /')
+      console.log('[LanguageSetup] Success! Redirecting to /server-setup')
       // Force a complete page reload from server to pick up new cookies
-      window.location.replace('/')
+      window.location.replace('/server-setup')
     } catch (err: any) {
       console.error('[LanguageSetup] Error:', err)
       setError(err.message || t('errors.saveFailed'))

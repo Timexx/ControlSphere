@@ -852,6 +852,22 @@ const messages = {
       critical: 'Kritisch'
     }
   },
+  serverSetup: {
+    eyebrow: 'Server-Konfiguration',
+    title: 'Server-URL festlegen',
+    subtitle: 'Gib die URL ein, über die Agents und Browser diesen Server erreichen. Verwende deine LAN-IP — nicht die Docker-Container-IP.',
+    label: 'Server-URL',
+    placeholder: 'http://192.168.10.10:3000',
+    hint: 'Beispiele: http://192.168.10.10:3000  ·  https://controlsphere.example.com  ·  http://truenas.local:3000',
+    detectedHint: 'Automatisch erkannt',
+    save: 'Speichern und weiter',
+    saving: 'Wird gespeichert...',
+    savedFeedback: 'Gespeichert — wird weitergeleitet…',
+    footnote: 'Du kannst dies später in den Einstellungen ändern.',
+    errors: {
+      saveFailed: 'Server-URL konnte nicht gespeichert werden.',
+    },
+  },
 }
 
 export default messages

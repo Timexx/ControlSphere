@@ -2,31 +2,38 @@ import { NextResponse } from 'next/server'
 import { networkInterfaces } from 'os'
 import fs from 'fs'
 import path from 'path'
+import { prisma } from '@/lib/prisma'
 
 // Prevent static generation — this route reads files from disk at runtime
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    // Finde die lokale IP-Adresse
-    const nets = networkInterfaces()
-    let serverIp = 'localhost'
-    
-    for (const name of Object.keys(nets)) {
-      const netInfo = nets[name]
-      if (!netInfo) continue
-      
-      for (const net of netInfo) {
-        const familyV4Value = typeof net.family === 'string' ? 'IPv4' : 4
-        if (net.family === familyV4Value && !net.internal) {
-          serverIp = net.address
-          break
-        }
-      }
-      if (serverIp !== 'localhost') break
-    }
+    let serverUrl: string
 
-    const serverUrl = `${serverIp}:${process.env.PORT || 3000}`
+    // 1. Prefer admin-configured URL from DB
+    const config = await prisma.serverConfig.findUnique({ where: { id: 'global' } })
+    if (config?.serverUrl) {
+      // strip protocol — the shell script builds ws:// itself
+      serverUrl = config.serverUrl.replace(/^https?:\/\//, '')
+    } else {
+      // 2. Fallback: auto-detect LAN IP
+      const nets = networkInterfaces()
+      let serverIp = 'localhost'
+      for (const name of Object.keys(nets)) {
+        const netInfo = nets[name]
+        if (!netInfo) continue
+        for (const net of netInfo) {
+          const familyV4Value = typeof net.family === 'string' ? 'IPv4' : 4
+          if (net.family === familyV4Value && !net.internal) {
+            serverIp = net.address
+            break
+          }
+        }
+        if (serverIp !== 'localhost') break
+      }
+      serverUrl = `${serverIp}:${process.env.PORT || 3000}`
+    }
 
     const rootDir = path.join(process.cwd(), '..')
     const agentMainPath = path.join(rootDir, 'agent', 'main.go')
