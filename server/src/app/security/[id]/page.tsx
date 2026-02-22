@@ -19,7 +19,9 @@ import {
   BookOpen,
   X,
   RefreshCw,
-  CheckCircle2
+  CheckCircle2,
+  Filter,
+  AlertTriangle
 } from 'lucide-react'
 import AppShell from '@/components/AppShell'
 import StatusBadge from '@/components/StatusBadge'
@@ -142,6 +144,7 @@ export default function VMSecurityDetailPage() {
   const [scanTriggering, setScanTriggering] = useState(false)
   const [scanFallbackStart, setScanFallbackStart] = useState<string | null>(null)
   const [resolving, setResolving] = useState(false)
+  const [severityFilter, setSeverityFilter] = useState<'all' | 'important' | 'high-only'>('important')
   const [showAddModal, setShowAddModal] = useState(false)
   const [, forceUpdate] = useState(0) // For timestamp refresh
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; tone: 'success' | 'error' | 'info' }>>([])
@@ -390,8 +393,8 @@ export default function VMSecurityDetailPage() {
       }
     }
     // Only count events that are still active (open or acknowledged).
-    // Resolved events must not influence the severity badge.
-    for (const evt of events.filter((e) => e.status === 'open' || e.status === 'ack')) {
+    // Resolved events and low-severity events must not influence the severity badge.
+    for (const evt of events.filter((e) => (e.status === 'open' || e.status === 'ack') && e.severity !== 'low')) {
       consider(evt.severity)
     }
     for (const vuln of vulnerabilities) consider(vuln.severity)
@@ -404,6 +407,21 @@ export default function VMSecurityDetailPage() {
     const medium = vulnerabilities.filter((v) => v.severity === 'medium').length
     return { critical, high, medium, total: vulnerabilities.length }
   }, [vulnerabilities])
+
+  // Filter security events by severity level
+  const filteredEvents = useMemo(() => {
+    if (severityFilter === 'all') return events
+    if (severityFilter === 'high-only') {
+      return events.filter((e) => e.severity === 'high' || e.severity === 'critical')
+    }
+    // 'important' = high + medium + critical (hide low)
+    return events.filter((e) => e.severity !== 'low')
+  }, [events, severityFilter])
+
+  // Count of hidden low-severity events
+  const hiddenLowCount = useMemo(() => {
+    return events.filter((e) => e.severity === 'low').length
+  }, [events])
 
   const downloadPackagesCSV = () => {
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19)
@@ -874,29 +892,65 @@ export default function VMSecurityDetailPage() {
                   />
                 ) : (
                   <div className="space-y-3">
-                    {events.map((evt) => (
-                      <div
-                        key={evt.id}
-                        className={`rounded-lg border p-3 flex items-start gap-3 ${
-                          evt.status === 'resolved' 
-                            ? 'border-slate-800/50 bg-[#0C121A]/40 opacity-60' 
-                            : 'border-slate-800 bg-[#0C121A]/80'
-                        }`}
-                      >
-                        <SeverityPill severity={evt.severity} />
-                        <div className="flex-1">
-                          <p className={`text-sm font-medium ${evt.status === 'resolved' ? 'text-slate-400' : 'text-white'}`}>
-                            {evt.message}
-                          </p>
-                          <p className="text-xs text-slate-400">
-                            {evt.type} • {formatDistanceToNow(new Date(evt.createdAt), { locale: dateLocale })} ago • 
-                            <span className={evt.status === 'resolved' ? 'text-emerald-400' : 'text-amber-400'}>
-                              {' '}{evt.status === 'resolved' ? '✓ Read' : evt.status}
-                            </span>
-                          </p>
+                    {/* Severity Filter Bar */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Filter className="h-3.5 w-3.5 text-slate-400" />
+                      {(['important', 'all', 'high-only'] as const).map((level) => {
+                        const labels = {
+                          all: t('filters.all'),
+                          important: t('filters.important'),
+                          'high-only': t('filters.highOnly')
+                        }
+                        return (
+                          <button
+                            key={level}
+                            onClick={() => setSeverityFilter(level)}
+                            className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                              severityFilter === level
+                                ? 'border-cyan-500 text-cyan-200 bg-cyan-500/15'
+                                : 'border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+                            }`}
+                          >
+                            {labels[level]}
+                          </button>
+                        )
+                      })}
+                      {hiddenLowCount > 0 && severityFilter !== 'all' && (
+                        <span className="text-xs text-slate-500 ml-1">
+                          ({hiddenLowCount} {t('filters.hiddenLow')})
+                        </span>
+                      )}
+                    </div>
+
+                    {filteredEvents.length === 0 ? (
+                      <p className="text-sm text-slate-500 text-center py-4">
+                        {t('filters.noMatch')}
+                      </p>
+                    ) : (
+                      filteredEvents.map((evt) => (
+                        <div
+                          key={evt.id}
+                          className={`rounded-lg border p-3 flex items-start gap-3 overflow-hidden ${
+                            evt.status === 'resolved' 
+                              ? 'border-slate-800/50 bg-[#0C121A]/40 opacity-60' 
+                              : 'border-slate-800 bg-[#0C121A]/80'
+                          }`}
+                        >
+                          <SeverityPill severity={evt.severity} />
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium break-all ${evt.status === 'resolved' ? 'text-slate-400' : 'text-white'}`}>
+                              {evt.message}
+                            </p>
+                            <p className="text-xs text-slate-400">
+                              {evt.type} • {formatDistanceToNow(new Date(evt.createdAt), { locale: dateLocale })} ago • 
+                              <span className={evt.status === 'resolved' ? 'text-emerald-400' : 'text-amber-400'}>
+                                {' '}{evt.status === 'resolved' ? '✓ Read' : evt.status}
+                              </span>
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 )}
               </ExpandableSectionCard>
@@ -1260,6 +1314,38 @@ export default function VMSecurityDetailPage() {
                 </div>
               </div>
 
+              {/* Severity Classification */}
+              <div className="space-y-3 pt-2 border-t border-slate-700">
+                <h3 className="text-sm font-semibold text-amber-300 uppercase tracking-wider flex items-center gap-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  {t('handbook.sections.severityClassification.title')}
+                </h3>
+                <p className="text-sm text-slate-300">
+                  {t('handbook.sections.severityClassification.description')}
+                </p>
+                <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700 space-y-3">
+                  <div>
+                    <p className="text-xs font-semibold text-orange-300">{t('handbook.sections.severityClassification.high')}</p>
+                    <p className="text-xs font-mono text-slate-400 mt-0.5">{t('handbook.sections.severityClassification.highPaths')}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-amber-300">{t('handbook.sections.severityClassification.medium')}</p>
+                    <p className="text-xs font-mono text-slate-400 mt-0.5">{t('handbook.sections.severityClassification.mediumPaths')}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-400">{t('handbook.sections.severityClassification.low')}</p>
+                    <p className="text-xs font-mono text-slate-500 mt-0.5">{t('handbook.sections.severityClassification.lowPaths')}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-500">{t('handbook.sections.severityClassification.ignored')}</p>
+                    <p className="text-xs font-mono text-slate-600 mt-0.5">{t('handbook.sections.severityClassification.ignoredPaths')}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-400 italic">
+                  {t('handbook.sections.severityClassification.filterNote')}
+                </p>
+              </div>
+
             </div>
           </div>
         </div>
@@ -1380,11 +1466,15 @@ function EmptyHint({ text, detail }: { text: string; detail: string }) {
 
 function SeverityPill({ severity }: { severity: string }) {
   const tone =
-    severity === 'critical' || severity === 'high'
+    severity === 'critical'
       ? 'border-rose-500/60 text-rose-200 bg-rose-500/10'
-      : severity === 'medium'
-        ? 'border-amber-400/60 text-amber-200 bg-amber-500/10'
-        : 'border-slate-700 text-slate-200 bg-slate-800/60'
+      : severity === 'high'
+        ? 'border-orange-500/60 text-orange-200 bg-orange-500/10'
+        : severity === 'medium'
+          ? 'border-amber-400/60 text-amber-200 bg-amber-500/10'
+          : severity === 'low'
+            ? 'border-slate-600 text-slate-400 bg-slate-800/60'
+            : 'border-slate-700 text-slate-200 bg-slate-800/60'
   return (
     <span className={`text-[11px] uppercase tracking-[0.2em] px-2 py-1 rounded-full border ${tone}`}>
       {severity}

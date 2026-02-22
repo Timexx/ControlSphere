@@ -559,6 +559,13 @@ const messages = {
         detail: 'No listening ports could be detected on this system.'
       }
     },
+    filters: {
+      all: 'All events',
+      important: 'Important (High + Medium)',
+      highOnly: 'Critical only (High)',
+      hiddenLow: 'low-priority hidden',
+      noMatch: 'No events match the current filter.'
+    },
     liveScan: {
       running: 'Scan running...',
       eta: 'ETA {seconds}s'
@@ -618,7 +625,7 @@ const messages = {
       sections: {
         fileIntegrity: {
           title: '1. File Integrity Monitoring',
-          description: 'Monitors critical system files for unexpected changes. Any modification triggers a "high" severity event.',
+          description: 'Monitors the entire filesystem for unexpected changes. Severity is automatically classified by path: system-critical files (e.g. /etc/) are rated HIGH, application files MEDIUM, and log/temp/Docker files LOW.',
           files: 'Monitored files:',
           filesList: [
             '/etc/passwd',
@@ -680,6 +687,19 @@ const messages = {
             serverMatching: 'Server performs CVE matching centrally using mirrored data and ecosystem-aware version logic.',
             operatorChecks: 'Operators can view “Directories scanned for CVEs” in the scan report and rerun CVE sync via POST /api/security/cve.'
           }
+        },
+        severityClassification: {
+          title: '6. Severity Classification',
+          description: 'File integrity events are automatically classified by path to reduce noise and prioritize critical changes.',
+          high: 'HIGH — System-critical paths',
+          highPaths: '/etc/, /root/.ssh/, /usr/bin/, /usr/sbin/, /sbin/, /bin/, /boot/, /lib/',
+          medium: 'MEDIUM — Application paths',
+          mediumPaths: '/opt/, /srv/, /var/www/, /home/*/bin/, and other application directories',
+          low: 'LOW — Logs & temporary files',
+          lowPaths: '*.log, /var/log/, /tmp/, /var/cache/, Docker overlay layers, PM2 logs, letsencrypt logs',
+          ignored: 'IGNORED — Completely filtered',
+          ignoredPaths: '/var/lib/docker/containers/, /var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/',
+          filterNote: 'The default view hides LOW events. Use the filter buttons to show all events if needed.'
         }
       }
     },

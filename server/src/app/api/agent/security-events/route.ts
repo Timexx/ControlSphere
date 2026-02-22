@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
 import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
+import { classifyIntegritySeverity } from '@/lib/integrity-severity'
 
 function hashSecretKey(secret: string) {
   return crypto.createHash('sha256').update(secret).digest('hex')
@@ -43,9 +44,9 @@ interface SecurityEventInput {
 }
 
 const INTEGRITY_IGNORE_PATTERNS = [
-  /^\/var\/log\/.*/i,
   /^\/var\/log\/journal\/.*/i,
   /^\/var\/lib\/docker\/containers\/.*/i,
+  /^\/var\/lib\/docker\/overlay2\/.*/i,
   /^\/var\/cache\/apt\/.*/i,
   /^\/var\/lib\/apt\/.*/i,
   /^\/var\/lib\/dpkg\/.*/i,
@@ -117,6 +118,11 @@ export async function POST(request: NextRequest) {
       const derivedPath = event.data?.path as string | undefined || extractPathFromMessage(event.message)
       const fingerprint = event.fingerprint || (derivedPath ? `${event.type}:${derivedPath}` : `${event.type}:${event.message}`)
 
+      // Smart severity: classify integrity events by path instead of using agent-supplied "high"
+      const effectiveSeverity = event.type === 'integrity'
+        ? classifyIntegritySeverity(derivedPath)
+        : event.severity
+
       if (event.type === 'integrity' && shouldIgnoreIntegrityEvent(derivedPath)) {
         suppressed++
         continue
@@ -153,7 +159,7 @@ export async function POST(request: NextRequest) {
           where: { id: existingEvent.id },
           data: {
             message: event.message,
-            severity: event.severity,
+            severity: effectiveSeverity,
             data: JSON.stringify({ ...event.data, path: derivedPath, fingerprint }),
             status: newStatus,
             updatedAt: new Date()
@@ -169,7 +175,7 @@ export async function POST(request: NextRequest) {
           data: {
             machineId,
             type: event.type,
-            severity: event.severity,
+            severity: effectiveSeverity,
             message: event.message,
             data: JSON.stringify({ ...event.data, path: derivedPath, fingerprint }),
             status: 'open'

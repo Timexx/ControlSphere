@@ -6,11 +6,12 @@ import { realtimeEvents } from '@/lib/realtime-events'
 import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
 import { scanPackages } from '@/services/vulnerability-scanner'
 import { clearScanProgress } from '@/lib/scan-progress-store'
+import { classifyIntegritySeverity } from '@/lib/integrity-severity'
 
 const INTEGRITY_IGNORE_PATTERNS = [
-  /^\/var\/log\/.*/i,
   /^\/var\/log\/journal\/.*/i,
   /^\/var\/lib\/docker\/containers\/.*/i,
+  /^\/var\/lib\/docker\/overlay2\/.*/i,
   /^\/var\/cache\/apt\/.*/i,
   /^\/var\/lib\/apt\/.*/i,
   /^\/var\/lib\/dpkg\/.*/i,
@@ -294,7 +295,7 @@ export async function POST(request: NextRequest) {
           machineId,
           policyId: finding.policyId || null,
           type: 'integrity',
-          severity: finding.severity || 'high',
+          severity: classifyIntegritySeverity(path),
           message: finding.message || `Integrity issue detected at ${finding.targetPath || 'unknown path'}`,
           data: JSON.stringify(finding),
         })

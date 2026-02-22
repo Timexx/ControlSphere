@@ -47,7 +47,7 @@ export async function GET() {
         }
       }),
       prisma.securityEvent.findMany({
-        where: { ...machineWhere.id ? { machineId: machineWhere.id } : {}, status: { in: ['open', 'ack'] } },
+        where: { ...machineWhere.id ? { machineId: machineWhere.id } : {}, status: { in: ['open', 'ack'] }, severity: { not: 'low' } },
         select: { machineId: true, severity: true }
       }).catch((err) => {
         console.error('Error fetching security events (non-fatal):', err)

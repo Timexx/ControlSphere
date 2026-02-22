@@ -559,6 +559,13 @@ const messages = {
         detail: 'Es konnten keine offenen Ports auf diesem System erkannt werden.'
       }
     },
+    filters: {
+      all: 'Alle Ereignisse',
+      important: 'Wichtig (Hoch + Mittel)',
+      highOnly: 'Nur kritisch (Hoch)',
+      hiddenLow: 'unwichtige ausgeblendet',
+      noMatch: 'Keine Ereignisse passen zum aktuellen Filter.'
+    },
     liveScan: {
       running: 'Scan läuft...',
       eta: 'Verbleibend: {seconds}s'
@@ -618,7 +625,7 @@ const messages = {
       sections: {
         fileIntegrity: {
           title: '1. File Integrity Monitoring',
-          description: 'Überwacht kritische Systemdateien auf unerwartete Änderungen. Bei jeder Modifikation wird ein Event mit Severity "high" erzeugt.',
+          description: 'Überwacht das gesamte Dateisystem auf unerwartete Änderungen. Die Severity wird automatisch nach Pfad klassifiziert: Systemkritische Dateien (z.B. /etc/) werden als HIGH eingestuft, Anwendungsdateien als MEDIUM, und Log-/Temp-/Docker-Dateien als LOW.',
           files: 'Überwachte Dateien:',
           filesList: [
             '/etc/passwd',
@@ -680,6 +687,19 @@ const messages = {
             serverMatching: 'Server führt das CVE-Matching zentral mit dem gespiegelten Datensatz und ecosystem-bewusster Versionslogik aus.',
             operatorChecks: 'Operatoren sehen „Verzeichnisse, die auf CVEs geprüft wurden“ im Scan-Report und können CVE-Sync via POST /api/security/cve neu anstoßen.'
           }
+        },
+        severityClassification: {
+          title: '6. Severity-Klassifizierung',
+          description: 'File-Integrity-Events werden automatisch nach Pfad klassifiziert, um Rauschen zu reduzieren und kritische Änderungen zu priorisieren.',
+          high: 'HIGH — Systemkritische Pfade',
+          highPaths: '/etc/, /root/.ssh/, /usr/bin/, /usr/sbin/, /sbin/, /bin/, /boot/, /lib/',
+          medium: 'MEDIUM — Anwendungspfade',
+          mediumPaths: '/opt/, /srv/, /var/www/, /home/*/bin/ und andere Anwendungsverzeichnisse',
+          low: 'LOW — Logs & temporäre Dateien',
+          lowPaths: '*.log, /var/log/, /tmp/, /var/cache/, Docker-Overlay-Layer, PM2-Logs, Letsencrypt-Logs',
+          ignored: 'IGNORIERT — Vollständig gefiltert',
+          ignoredPaths: '/var/lib/docker/containers/, /var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/',
+          filterNote: 'Die Standardansicht blendet LOW-Events aus. Nutze die Filter-Buttons, um bei Bedarf alle Events anzuzeigen.'
         }
       }
     },
