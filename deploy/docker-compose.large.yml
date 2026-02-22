@@ -1,0 +1,91 @@
+services:
+
+  # -- PostgreSQL ----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: maintainer
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB: maintainer
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - secrets_data:/run/secrets:ro
+    depends_on:
+      init-secrets:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maintainer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 2G
+        reservations:
+          memory: 1G
+    command: >
+      postgres
+        -c shared_buffers=512MB
+        -c max_connections=200
+        -c work_mem=4MB
+    # Not exposed to the host — only reachable from the server container.
+
+  # -- Init: generate shared secrets once ----------------------------------
+  init-secrets:
+    image: alpine:3.19
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        if [ ! -f /secrets/postgres_password ]; then
+          apk add --no-cache openssl > /dev/null 2>&1
+          PW=$$(openssl rand -base64 24 | tr -d '+/=\n' | head -c 32)
+          echo "$$PW" > /secrets/postgres_password
+          chmod 600 /secrets/postgres_password
+          echo "[init-secrets] Generated postgres_password."
+        else
+          echo "[init-secrets] postgres_password already exists, skipping."
+        fi
+    volumes:
+      - secrets_data:/secrets
+
+  # -- ControlSphere Server (Next.js + WebSocket) -------------------------
+  # Profile: Large — 200 – 500 agents
+  # Resources: 4 vCPU / 4 GB RAM | Postgres: 4 vCPU / 2 GB RAM
+  # DB pool: connection_limit=125 | Disk: plan for ~500 GB
+  # Note: For 500+ agents consider PgBouncer in front of Postgres.
+  server:
+    image: ghcr.io/timexx/controlsphere:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: "0.0.0.0"
+      HEARTBEAT_METRICS_INTERVAL_MS: 60000
+      HEARTBEAT_PORTS_INTERVAL_MS: 300000
+      DATABASE_URL: "postgresql://maintainer:${POSTGRES_PASSWORD}@postgres:5432/maintainer?connection_limit=125&pool_timeout=10"
+    volumes:
+      - secrets_data:/app/.secrets
+      - agent_downloads:/app/public/downloads
+    depends_on:
+      init-secrets:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          memory: 2G
+
+volumes:
+  postgres_data:
+  secrets_data:
+  agent_downloads:

@@ -78,181 +78,26 @@ docker compose up -d --build        # rebuild after a code change
 
 ### ⚙️ Capacity & resource configuration
 
-Pick the profile that matches your fleet size, then copy the YAML snippets into [`docker-compose.yml`](docker-compose.yml).
+Pick the profile that matches your fleet size and run `docker compose` with the matching file — everything is pre-configured, nothing to edit.
 
-| Profile | Agents | Server CPU | Server RAM | Postgres RAM | Disk | Metrics growth/day |
-|---------|-------:|:----------:|:----------:|:------------:|:----:|:-----------------:|
-| **Micro** | 1 – 10 | 0.5 vCPU | 512 MB | 256 MB | 20 GB | ~6 MB |
-| **Small** | 10 – 50 | 1 vCPU | 1 GB | 512 MB | 50 GB | ~56 MB |
-| **Medium** | 50 – 200 | 2 vCPU | 2 GB | 1 GB | 200 GB | ~225 MB |
-| **Large** | 200 – 500 | 4 vCPU | 4 GB | 2 GB | 500 GB | ~560 MB |
+| Profile | Agents | Server CPU | Server RAM | Postgres RAM | Disk | Metrics growth/day | Config file |
+|---------|-------:|:----------:|:----------:|:------------:|:----:|:-----------------:|:-----------:|
+| **Micro** | 1 – 10 | 0.5 vCPU | 512 MB | 256 MB | 20 GB | ~6 MB | [docker-compose.micro.yml](deploy/docker-compose.micro.yml) |
+| **Small** | 10 – 50 | 1 vCPU | 1 GB | 512 MB | 50 GB | ~56 MB | [docker-compose.small.yml](deploy/docker-compose.small.yml) |
+| **Medium** | 50 – 200 | 2 vCPU | 2 GB | 1 GB | 200 GB | ~225 MB | [docker-compose.medium.yml](deploy/docker-compose.medium.yml) |
+| **Large** | 200 – 500 | 4 vCPU | 4 GB | 2 GB | 500 GB | ~560 MB | [docker-compose.large.yml](deploy/docker-compose.large.yml) |
 
-> **Note on disk:** The `Metric` table has no automatic pruning. Each agent writes one row every ~15 s — disk consumption grows indefinitely. Plan for at least 6 months of the listed daily rate or add a cron job to `DELETE FROM "Metric" WHERE "createdAt" < NOW() - INTERVAL '90 days'`.
+Each file is a full, standalone `docker-compose.yml` replacement — resource limits, DB pool size, and heartbeat intervals are all pre-tuned for the profile. Just download and deploy:
 
-<details>
-<summary><strong>Micro</strong> — up to 10 agents</summary>
-
-Add or merge the following blocks into [`docker-compose.yml`](docker-compose.yml):
-
-```yaml
-services:
-  server:
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
-        reservations:
-          memory: 256M
-    environment:
-      HEARTBEAT_METRICS_INTERVAL_MS: 30000   # 30 s (default 15 s)
-      HEARTBEAT_PORTS_INTERVAL_MS: 120000    # 2 min (default 60 s)
-
-  postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 256M
-        reservations:
-          memory: 128M
-    command: >
-      postgres
-        -c shared_buffers=64MB
-        -c max_connections=20
-```
-</details>
-
-<details>
-<summary><strong>Small</strong> — 10 – 50 agents</summary>
-
-```yaml
-services:
-  server:
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 1G
-        reservations:
-          memory: 512M
-    environment:
-      HEARTBEAT_METRICS_INTERVAL_MS: 30000
-      HEARTBEAT_PORTS_INTERVAL_MS: 120000
-
-  postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: '1'
-          memory: 512M
-        reservations:
-          memory: 256M
-    command: >
-      postgres
-        -c shared_buffers=128MB
-        -c max_connections=40
-```
-</details>
-
-<details>
-<summary><strong>Medium</strong> — 50 – 200 agents</summary>
-
-```yaml
-services:
-  server:
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
-          memory: 1G
-    environment:
-      HEARTBEAT_METRICS_INTERVAL_MS: 30000
-      HEARTBEAT_PORTS_INTERVAL_MS: 120000
-
-  postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: '2'
-          memory: 1G
-        reservations:
-          memory: 512M
-    command: >
-      postgres
-        -c shared_buffers=256MB
-        -c max_connections=100
-```
-</details>
-
-<details>
-<summary><strong>Large</strong> — 200 – 500 agents</summary>
-
-```yaml
-services:
-  server:
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 4G
-        reservations:
-          memory: 2G
-    environment:
-      HEARTBEAT_METRICS_INTERVAL_MS: 60000   # 60 s — reduce DB write rate at scale
-      HEARTBEAT_PORTS_INTERVAL_MS: 300000    # 5 min
-
-  postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 2G
-        reservations:
-          memory: 1G
-    command: >
-      postgres
-        -c shared_buffers=512MB
-        -c max_connections=200
-        -c work_mem=4MB
-```
-</details>
-
----
-
-### 🔌 Automatic DB connection pool sizing
-
-Prisma's default pool is ~10 connections. With many agents writing metrics simultaneously this becomes a bottleneck. Use the formula below to derive the right value for your fleet:
-
-```
-connection_limit = max(10, floor(agents × 0.25))
-```
-
-| Profile | Agents | `connection_limit` |
-|---------|-------:|:------------------:|
-| Micro | 10 | 10 |
-| Small | 50 | 13 |
-| Medium | 200 | 50 |
-| Large | 500 | 125 |
-
-**Calculate your value before deploying:**
 ```bash
-AGENTS=50
-LIMIT=$(( AGENTS / 4 > 10 ? AGENTS / 4 : 10 ))
-echo "Use connection_limit=${LIMIT}"
+# Example: Small profile
+docker compose -f deploy/docker-compose.small.yml up -d
 ```
 
-Then add a `DATABASE_URL` entry to the `server` service in [`docker-compose.yml`](docker-compose.yml):
-```yaml
-services:
-  server:
-    environment:
-      DATABASE_URL: "postgresql://maintainer:${POSTGRES_PASSWORD}@postgres:5432/maintainer?connection_limit=${LIMIT}&pool_timeout=10"
-```
-
-> For Large deployments (200+ agents) consider adding [PgBouncer](https://www.pgbouncer.org/) in front of Postgres and setting `connection_limit=10` on the Prisma side — PgBouncer then handles the multiplexing.
+> **Note on disk:** The `Metric` table has no automatic pruning. Disk consumption grows indefinitely — plan for at least 6 months of the listed daily rate, or add a cron job:
+> ```sql
+> DELETE FROM "Metric" WHERE "createdAt" < NOW() - INTERVAL '90 days';
+> ```
 
 ---
 
