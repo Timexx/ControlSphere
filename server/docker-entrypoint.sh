@@ -37,9 +37,11 @@ auto_secret POSTGRES_PASSWORD     postgres_password     "openssl rand -base64 24
 
 # Build DATABASE_URL from the (potentially auto-generated) password
 # if the caller did not set DATABASE_URL explicitly.
+# DB_CONNECTION_LIMIT can be overridden via environment (default: 20).
 if [ -z "$DATABASE_URL" ]; then
-  export DATABASE_URL="postgresql://maintainer:${POSTGRES_PASSWORD}@postgres:5432/maintainer?schema=public&connection_limit=20"
-  echo "[secrets] DATABASE_URL built from auto-generated credentials."
+  _pool="${DB_CONNECTION_LIMIT:-20}"
+  export DATABASE_URL="postgresql://maintainer:${POSTGRES_PASSWORD}@postgres:5432/maintainer?schema=public&connection_limit=${_pool}&pool_timeout=10"
+  echo "[secrets] DATABASE_URL built from auto-generated credentials (pool=${_pool})."
 fi
 
 # -- Run Prisma migrations ------------------------------------------------
