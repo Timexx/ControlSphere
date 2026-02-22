@@ -6,6 +6,9 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
+# Update npm to latest for security fixes
+RUN npm install -g npm@11.10.1
+
 COPY package.json package-lock.json* ./
 RUN npm ci
 
@@ -43,12 +46,17 @@ ENV PORT=3000
 # so we need: full node_modules, TypeScript sources, tsconfig, and the
 # Next.js build output (.next).
 COPY --from=builder /app/node_modules   ./node_modules
+COPY --from=builder /app/package.json   ./package.json
+COPY --from=builder /app/package-lock.json ./package-lock.json
+
+# Remove devDependencies from production image to reduce attack surface
+# (prisma + typescript have been moved to dependencies since they're needed at runtime)
+RUN npm prune --production && rm -rf /root/.npm
 COPY --from=builder /app/.next          ./.next
 COPY --from=builder /app/public         ./public
 COPY --from=builder /app/prisma         ./prisma
 COPY --from=builder /app/src            ./src
 COPY --from=builder /app/server.js      ./server.js
-COPY --from=builder /app/package.json   ./package.json
 COPY --from=builder /app/tsconfig.json  ./tsconfig.json
 COPY --from=builder /app/next.config.js ./next.config.js
 
