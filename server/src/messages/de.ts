@@ -87,6 +87,7 @@ const messages = {
       security: 'Security',
       secure: 'Sicher',
       audit: 'Audit Logs',
+      settings: 'Einstellungen',
     },
     actions: {
       toggleNav: 'Navigation umschalten',
@@ -867,6 +868,28 @@ const messages = {
     footnote: 'Du kannst dies später in den Einstellungen ändern.',
     errors: {
       saveFailed: 'Server-URL konnte nicht gespeichert werden.',
+    },
+  },
+  settings: {
+    eyebrow: 'Administration',
+    title: 'Einstellungen',
+    subtitle: 'Systemweite Konfiguration dieser ControlSphere-Instanz.',
+    serverUrl: {
+      eyebrow: 'Netzwerk',
+      title: 'Server-URL',
+      description: 'Die öffentliche URL, unter der dieser Server erreichbar ist. Wird vom Agenten-Install-Script, WebSocket-Verbindungen und QR-Codes verwendet. Nach jeder Netzwerkrekonfiguration aktualisieren.',
+      inputLabel: 'Neue Server-URL',
+      copy: 'In Zwischenablage kopieren',
+      detected: 'Automatisch erkannte Netzwerkschnittstelle',
+      useDetected: 'Übernehmen',
+      save: 'Speichern',
+      saving: 'Speichern…',
+      saveSuccess: 'URL erfolgreich gespeichert.',
+      errorGeneric: 'Konnte nicht gespeichert werden. Erwartet: http(s)://host:port',
+      impactTitle: 'Davon betroffen',
+      impactAgent: 'Agenten-Install-Script (curl … | bash)',
+      impactWs: 'WebSocket-Verbindungen laufender Agenten',
+      impactInstall: 'Download-URL für das Agenten-Binary',
     },
   },
 }

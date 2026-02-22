@@ -87,6 +87,7 @@ const messages = {
       security: 'Security',
       secure: 'Secure',
       audit: 'Audit logs',
+      settings: 'Settings',
     },
     actions: {
       toggleNav: 'Toggle navigation',
@@ -867,6 +868,28 @@ const messages = {
     footnote: 'You can change this later in the settings.',
     errors: {
       saveFailed: 'Could not save the server URL.',
+    },
+  },
+  settings: {
+    eyebrow: 'Administration',
+    title: 'Settings',
+    subtitle: 'System-wide configuration for this ControlSphere instance.',
+    serverUrl: {
+      eyebrow: 'Network',
+      title: 'Server URL',
+      description: 'The public URL under which this server is reachable. Used by agent install scripts, WebSocket connections, and QR codes. Update this after any network reconfiguration.',
+      inputLabel: 'New server URL',
+      copy: 'Copy to clipboard',
+      detected: 'Auto-detected from network interface',
+      useDetected: 'Use this',
+      save: 'Save',
+      saving: 'Saving…',
+      saveSuccess: 'URL saved successfully.',
+      errorGeneric: 'Could not save. Expected format: http(s)://host:port',
+      impactTitle: 'Affected by this setting',
+      impactAgent: 'Agent install script (curl … | bash)',
+      impactWs: 'WebSocket connections from running agents',
+      impactInstall: 'Download URL for agent binary',
     },
   },
 }

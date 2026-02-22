@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Server, Layers, Plus, LogOut, ShieldCheck, ShieldAlert, Menu, X, TerminalSquare } from 'lucide-react'
+import { Server, Layers, Plus, LogOut, ShieldCheck, ShieldAlert, Menu, X, TerminalSquare, Settings } from 'lucide-react'
 import { type ReactNode, useState, useEffect, useRef, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { useTranslations } from 'next-intl'
@@ -171,6 +171,10 @@ export default function AppShell({
     { href: '/audit-logs', label: t('nav.audit'), icon: TerminalSquare },
   ];
 
+  const bottomNavItems = [
+    { href: '/settings', label: t('nav.settings'), icon: Settings },
+  ];
+
   return (
     <div className="min-h-screen relative bg-[#050505] text-[#E0E0E0]">
       <BackgroundLayers />
@@ -307,10 +311,10 @@ export default function AppShell({
         {/* Sidebar - Fixed on both mobile and desktop */}
         {!hideNav && (
           <aside className={cn(
-            "fixed top-16 left-0 bottom-0 w-64 border-r border-slate-800 bg-[#0a0f16]/95 backdrop-blur-md z-40 transition-transform duration-300 ease-in-out lg:transition-none",
+            "fixed top-16 left-0 bottom-0 w-64 border-r border-slate-800 bg-[#0a0f16]/95 backdrop-blur-md z-40 transition-transform duration-300 ease-in-out lg:transition-none flex flex-col",
             isNavOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
           )}>
-            <nav className="p-4 space-y-2">
+            <nav className="flex-1 p-4 space-y-2">
               {navItems.map((item) => {
                 const active = pathname === item.href
                 return (
@@ -331,6 +335,27 @@ export default function AppShell({
                 )
               })}
             </nav>
+            <div className="p-4 border-t border-slate-800 space-y-2">
+              {bottomNavItems.map((item) => {
+                const active = pathname === item.href
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setIsNavOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2 rounded-lg border transition-all",
+                      active
+                        ? "border-cyan-500/70 bg-cyan-500/10 text-cyan-100 shadow-[0_0_20px_rgba(0,243,255,0.18)]"
+                        : "border-slate-800 text-slate-300 hover:border-cyan-500/50 hover:text-white hover:bg-[#0d1722]"
+                    )}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    <span className="text-sm font-medium">{item.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
           </aside>
         )}
 
