@@ -57,6 +57,9 @@ services:
       # All secrets are auto-generated — override via environment if needed.
       NODE_ENV: production
       PORT: 3000
+      # Override Docker's automatic HOSTNAME (container-ID) so the server
+      # binds to 0.0.0.0 and is reachable via the host port mapping.
+      HOSTNAME: "0.0.0.0"
     volumes:
       - secrets_data:/app/.secrets
       - agent_downloads:/app/public/downloads
