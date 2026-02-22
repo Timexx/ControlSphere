@@ -26,7 +26,7 @@ export default function AppShell({
   const t = useTranslations('appShell')
   const pathname = usePathname()
   const [isNavOpen, setIsNavOpen] = useState(false)
-  const [vulnSummary, setVulnSummary] = useState<{ critical: number; high: number; affectedMachines: number } | null>(null)
+  const [vulnSummary, setVulnSummary] = useState<{ critical: number; high: number; affectedMachines: number; criticalEvents: number } | null>(null)
   const [remainingTime, setRemainingTime] = useState<number | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [showExpiryDialog, setShowExpiryDialog] = useState(false)
@@ -77,7 +77,8 @@ export default function AppShell({
       setVulnSummary({
         critical: data.critical ?? 0,
         high: data.high ?? 0,
-        affectedMachines: data.affectedMachines ?? 0
+        affectedMachines: data.affectedMachines ?? 0,
+        criticalEvents: data.criticalEvents ?? 0
       })
     } catch (error) {
       console.error('Failed to fetch vulnerability summary:', error)
@@ -213,7 +214,7 @@ export default function AppShell({
               href="/security"
               className={cn(
                 "inline-flex h-10 items-center gap-3 px-4 rounded-lg border transition-all min-w-[180px]",
-                (vulnSummary?.critical ?? 0) > 0
+                ((vulnSummary?.critical ?? 0) + (vulnSummary?.criticalEvents ?? 0)) > 0
                   ? "border-rose-500/60 bg-rose-500/10 text-rose-50 shadow-[0_0_18px_rgba(244,63,94,0.35)]"
                   : "border-slate-700 bg-slate-800/60 text-slate-100 hover:border-cyan-500/60 hover:text-white"
               )}
@@ -221,9 +222,9 @@ export default function AppShell({
             >
               <div className="relative h-8 w-8 rounded-md border border-current/50 bg-black/30 flex items-center justify-center">
                 <ShieldAlert className="h-4 w-4" />
-                {(vulnSummary?.critical ?? 0) > 0 && (
+                {((vulnSummary?.critical ?? 0) + (vulnSummary?.criticalEvents ?? 0)) > 0 && (
                   <span className="absolute -top-1 -right-1 h-5 min-w-[20px] px-1 rounded-full bg-rose-600 text-[11px] font-semibold text-white flex items-center justify-center leading-none">
-                    {vulnSummary?.critical ?? 0}
+                    {(vulnSummary?.critical ?? 0) + (vulnSummary?.criticalEvents ?? 0)}
                   </span>
                 )}
               </div>
@@ -233,7 +234,10 @@ export default function AppShell({
                 </div>
                 <div className="text-xs text-slate-200">
                   {vulnSummary
-                    ? `${vulnSummary.critical} critical${(vulnSummary.high ?? 0) > 0 ? ` • ${vulnSummary.high} high` : ''}`
+                    ? (() => {
+                        const totalCritical = (vulnSummary.critical ?? 0) + (vulnSummary.criticalEvents ?? 0)
+                        return `${totalCritical} critical${(vulnSummary.high ?? 0) > 0 ? ` • ${vulnSummary.high} high` : ''}`
+                      })()
                     : '...'}
                 </div>
               </div>

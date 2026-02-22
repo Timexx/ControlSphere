@@ -13,24 +13,32 @@ export async function GET() {
       cve: { severity: { equals: 'high' } }
     }
 
-    const [critical, high, affectedMachineRows] = await Promise.all([
+    const [critical, high, affectedMachineRows, criticalEvents] = await Promise.all([
       prisma.vulnerabilityMatch.count({ where: criticalFilter }),
       prisma.vulnerabilityMatch.count({ where: highFilter }),
       prisma.vulnerabilityMatch.groupBy({
         by: ['machineId'],
         where: criticalFilter
-      })
+      }),
+      // Open security events that trigger KRITISCH status on the overview page
+      prisma.securityEvent.count({
+        where: {
+          status: { in: ['open', 'ack'] },
+          severity: { in: ['critical', 'high'] }
+        }
+      }).catch(() => 0)
     ])
 
     return NextResponse.json({
       critical,
       high,
-      affectedMachines: affectedMachineRows.length
+      affectedMachines: affectedMachineRows.length,
+      criticalEvents
     })
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       return NextResponse.json(
-        { critical: 0, high: 0, affectedMachines: 0, warning: `Database error (${error.code})` },
+        { critical: 0, high: 0, affectedMachines: 0, criticalEvents: 0, warning: `Database error (${error.code})` },
         { status: 500 }
       )
     }
