@@ -226,7 +226,9 @@ services:
 
 Prisma's default pool is ~10 connections. With many agents writing metrics simultaneously this becomes a bottleneck. Use the formula below to derive the right value for your fleet:
 
-$$\text{connection\_limit} = \max\!\left(10,\;\left\lfloor \text{agents} \times 0.25 \right\rfloor\right)$$
+```
+connection_limit = max(10, floor(agents × 0.25))
+```
 
 | Profile | Agents | `connection_limit` |
 |---------|-------:|:------------------:|
