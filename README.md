@@ -82,10 +82,10 @@ Pick the profile that matches your fleet size and run `docker compose` with the 
 
 | Profile | Agents | Server CPU | Server RAM | Postgres RAM | Disk | Metrics growth/day | Config file |
 |---------|-------:|:----------:|:----------:|:------------:|:----:|:-----------------:|:-----------:|
-| **Micro** | 1 – 10 | 0.5 vCPU | 512 MB | 256 MB | 20 GB | ~6 MB | [docker-compose.micro.yml](deploy/docker-compose.micro.yml) |
-| **Small** | 10 – 50 | 1 vCPU | 1 GB | 512 MB | 50 GB | ~56 MB | [docker-compose.small.yml](deploy/docker-compose.small.yml) |
-| **Medium** | 50 – 200 | 2 vCPU | 2 GB | 1 GB | 200 GB | ~225 MB | [docker-compose.medium.yml](deploy/docker-compose.medium.yml) |
-| **Large** | 200 – 500 | 4 vCPU | 4 GB | 2 GB | 500 GB | ~560 MB | [docker-compose.large.yml](deploy/docker-compose.large.yml) |
+| **Micro** | 1 – 10 | 0.5 vCPU | 512 MB | 256 MB | 20 GB | ~6 MB | [→ Deploy](deploy/docker-compose.micro.yml) |
+| **Small** | 10 – 50 | 1 vCPU | 1 GB | 512 MB | 50 GB | ~56 MB | [→ Deploy](deploy/docker-compose.small.yml) |
+| **Medium** | 50 – 200 | 2 vCPU | 2 GB | 1 GB | 200 GB | ~225 MB | [→ Deploy](deploy/docker-compose.medium.yml) |
+| **Large** | 200 – 500 | 4 vCPU | 4 GB | 2 GB | 500 GB | ~560 MB | [→ Deploy](deploy/docker-compose.large.yml) |
 
 Each file is a full, standalone `docker-compose.yml` replacement — resource limits, DB pool size, and heartbeat intervals are all pre-tuned for the profile. Just download and deploy:
 
