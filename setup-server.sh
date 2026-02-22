@@ -28,6 +28,101 @@ detect_os() {
     fi
 }
 
+# Install PostgreSQL automatically
+install_postgresql() {
+    local os=$(detect_os)
+    echo -e "${BLUE}Installing PostgreSQL...${NC}"
+    case $os in
+        macos)
+            if command -v brew &> /dev/null; then
+                brew install postgresql@16 2>/dev/null || true
+                brew services start postgresql@16 2>/dev/null || true
+                export PATH="/opt/homebrew/opt/postgresql@16/bin:/usr/local/opt/postgresql@16/bin:$PATH"
+            else
+                echo -e "${RED}Homebrew not found – cannot auto-install PostgreSQL on macOS.${NC}"
+                echo -e "${YELLOW}Install Homebrew first: https://brew.sh${NC}"
+                exit 1
+            fi
+            ;;
+        debian)
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql postgresql-contrib
+            sudo systemctl enable postgresql
+            sudo systemctl start postgresql
+            ;;
+        redhat)
+            sudo yum install -y postgresql-server postgresql-contrib 2>/dev/null || \
+                sudo dnf install -y postgresql-server postgresql-contrib
+            sudo postgresql-setup --initdb 2>/dev/null || true
+            sudo systemctl enable postgresql
+            sudo systemctl start postgresql
+            ;;
+        alpine)
+            sudo apk add --update postgresql postgresql-contrib
+            sudo rc-service postgresql setup 2>/dev/null || true
+            sudo rc-service postgresql start
+            ;;
+        *)
+            echo -e "${RED}Cannot auto-install PostgreSQL on unknown OS. Please install it manually.${NC}"
+            exit 1
+            ;;
+    esac
+    echo -e "${GREEN}PostgreSQL installed \u2713${NC}"
+}
+
+# Run a SQL command as the postgres superuser (cross-platform)
+run_psql() {
+    local os=$(detect_os)
+    if [ "$os" = "macos" ]; then
+        psql postgres -c "$1" 2>/dev/null
+    else
+        sudo -u postgres psql -c "$1" 2>/dev/null
+    fi
+}
+
+# Create DB user + database if they don't exist; set/update password
+setup_postgresql_db() {
+    local db_user="maintainer"
+    local db_name="maintainer"
+    local db_password="$1"
+
+    echo -e "${BLUE}Configuring PostgreSQL user and database...${NC}"
+
+    # Create user if missing, then (re-)set password
+    run_psql "DO \$\$ BEGIN
+      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$db_user') THEN
+        CREATE USER $db_user WITH PASSWORD '$db_password';
+      ELSE
+        ALTER USER $db_user WITH PASSWORD '$db_password';
+      END IF;
+    END \$\$;" || { echo -e "${RED}Failed to create PostgreSQL user.${NC}"; exit 1; }
+
+    # Create database if missing
+    run_psql "SELECT 'CREATE DATABASE $db_name OWNER $db_user'
+      WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$db_name')\\gexec" 2>/dev/null || \
+    run_psql "CREATE DATABASE $db_name OWNER $db_user" 2>/dev/null || true
+
+    run_psql "GRANT ALL PRIVILEGES ON DATABASE $db_name TO $db_user;" || true
+
+    echo -e "${GREEN}Database '$db_name' ready \u2713${NC}"
+}
+
+# Generate a secure random string using openssl (falls back to Node.js)
+gen_secret_base64() {
+    openssl rand -base64 64 2>/dev/null | tr -d '\n' || \
+        node -e "process.stdout.write(require('crypto').randomBytes(64).toString('base64'))"
+}
+
+gen_secret_hex32() {
+    openssl rand -hex 32 2>/dev/null || \
+        node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))"
+}
+
+gen_password() {
+    openssl rand -base64 24 2>/dev/null | tr -d '+/=' | head -c 32 || \
+        node -e "process.stdout.write(require('crypto').randomBytes(24).toString('hex').slice(0,32))"
+}
+
 # Install Node.js automatically
 install_nodejs() {
     local os=$(detect_os)
@@ -149,6 +244,63 @@ echo ""
 
 cd "$(dirname "$0")/server"
 
+# ── PostgreSQL + .env auto-setup ───────────────────────────────────────────
+# Check if .env already has a DATABASE_URL configured
+env_has_db_url() {
+    [ -f ".env" ] && grep -qE '^DATABASE_URL=.+' .env
+}
+
+if env_has_db_url; then
+    echo -e "${GREEN}server/.env with DATABASE_URL found ✓${NC}"
+else
+    echo -e "${YELLOW}No DATABASE_URL configured – setting up PostgreSQL automatically...${NC}"
+    echo ""
+
+    # Install PostgreSQL if psql is not available
+    if ! command -v psql &> /dev/null; then
+        install_postgresql
+    else
+        echo -e "${GREEN}PostgreSQL $(psql --version 2>/dev/null | head -1) found ✓${NC}"
+    fi
+
+    # Generate credentials
+    DB_PASSWORD=$(gen_password)
+    JWT_SECRET=$(gen_secret_base64)
+    SESSION_TOKEN_SECRET=$(gen_secret_hex32)
+    DB_URL="postgresql://maintainer:${DB_PASSWORD}@localhost:5432/maintainer?schema=public&connection_limit=20"
+
+    # Create user + database
+    setup_postgresql_db "$DB_PASSWORD"
+
+    # Copy .env.example if .env doesn't exist yet
+    if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+        cp .env.example .env
+    elif [ ! -f ".env" ]; then
+        touch .env
+    fi
+
+    # Write / update the three generated values in .env
+    # (replaces existing lines if present, appends if missing)
+    update_env() {
+        local key="$1" value="$2" file=".env"
+        if grep -qE "^${key}=" "$file"; then
+            sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file" && rm -f "${file}.bak"
+        else
+            echo "${key}=${value}" >> "$file"
+        fi
+    }
+
+    update_env "DATABASE_URL" "\"${DB_URL}\""
+    update_env "JWT_SECRET" "${JWT_SECRET}"
+    update_env "SESSION_TOKEN_SECRET" "${SESSION_TOKEN_SECRET}"
+
+    echo ""
+    echo -e "${GREEN}server/.env configured automatically ✓${NC}"
+    echo -e "${YELLOW}  DATABASE_URL set to: postgresql://maintainer:****@localhost:5432/maintainer${NC}"
+    echo -e "${YELLOW}  JWT_SECRET and SESSION_TOKEN_SECRET generated${NC}"
+    echo ""
+fi
+
 echo -e "${GREEN}Installing dependencies...${NC}"
 echo -e "${YELLOW}This may take a few minutes...${NC}"
 
@@ -178,28 +330,6 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
         fi
     fi
 done
-
-# Ensure .env exists before running Prisma
-if [ ! -f ".env" ]; then
-    if [ -f ".env.example" ]; then
-        echo -e "${YELLOW}No .env file found – copying .env.example to .env...${NC}"
-        cp .env.example .env
-        echo -e "${RED}ACTION REQUIRED: Open server/.env and fill in the required values:${NC}"
-        echo -e "${YELLOW}  DATABASE_URL         – PostgreSQL connection string${NC}"
-        echo -e "${YELLOW}  JWT_SECRET           – run: openssl rand -base64 64${NC}"
-        echo -e "${YELLOW}  SESSION_TOKEN_SECRET – run: openssl rand -hex 32${NC}"
-        echo ""
-        echo -e "${RED}Setup aborted. Configure server/.env and re-run ./setup-server.sh${NC}"
-        exit 1
-    else
-        echo -e "${RED}No .env file found and no .env.example available.${NC}"
-        echo -e "${YELLOW}Create server/.env with at least:${NC}"
-        echo -e '  DATABASE_URL="postgresql://user:password@localhost:5432/maintainer?schema=public"'
-        echo -e '  JWT_SECRET=<64-character random string>'
-        echo -e '  SESSION_TOKEN_SECRET=<32-byte hex string>'
-        exit 1
-    fi
-fi
 
 echo -e "${GREEN}Generating Prisma client...${NC}"
 npm run prisma:generate

@@ -1,397 +1,258 @@
-# ControlSphere ![Beta](https://img.shields.io/badge/status-beta-orange)
+# ControlSphere ![Beta](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 
-This is a modern, web-based platform for managing and monitoring multiple Linux systems, with lightweight agents installed on each system. 
+**Your entire infrastructure. One dashboard. Zero complexity.**
 
-The project was born from the idea of managing my servers more efficiently without spending money on large operators. 
-To support EU states in the open-source initiative, I am making the entire project available under the Apache 2 licence so that all companies and organisations can benefit from a free option they can adapt to their own needs. Everything is designed to ensure the highest possible level of security.
+ControlSphere gives you real-time visibility and full control over all your Linux systems — from a single, open-source web interface. Monitor live metrics, run terminal sessions, scan for CVEs, and manage packages across dozens of servers simultaneously. No SaaS subscriptions. No vendor lock-in. Runs entirely on your own hardware.
 
-I will continue to develop the project, so please join me in promoting open source! 
-
-## 🚀 Features
-
-- **Real-time Monitoring**: Live CPU, RAM, disk, and uptime metrics  
-- **Bulk Management**: Manage and update multiple systems simultaneously  
-- **Remote Terminal**: Web-based, SSH-like interactive shell access to each system  
-- **Security Dashboard**: Monitor security events and system health  
-- **Port Scanning**: Automatically scans and monitors open ports on all systems  
-- **Package Security**: Scans all installed packages and warns about outdated packages requiring updates  
-- **CVE Scanning**: Automatically downloads the latest CVE database and matches all installed packages against known vulnerabilities — with CSV export for audits and compliance reporting  
-- **JWT Authentication**: Secure token-based login  
-- **Quick Actions**: One-click system updates, reboots, and more  
-- **Auto-Discovery**: Systems automatically register with the server  
-- **Zero-Config Agent**: Self-contained single binary with no external dependencies  
-- **Multiple languages**: German and English are currently supported
-- **Modern interfacet**: with an intuitive user experience and modern design
-
-And so much more to discover 🧭
-
-## 📋 Architecture
-
-### Server (Next.js)
-- Modern Next.js 14 App Router  
-- Tailwind CSS for a premium, consistent UI  
-- PostgreSQL database (via Prisma)  
-- WebSocket communication for real-time updates  
-- Socket.io for bidirectional events  
-
-### Agent (Go)
-- Single self-contained binary  
-- Runs on any Linux system  
-- Collects system metrics  
-- PTY support for interactive terminal sessions – with encrypted connection and fingerprint including audit logging
-- Auto-reconnect on connection loss  
-
-## ✅ Prerequisites
-
-Before you start, make sure the following is available on your server:
-
-- **Node.js** 18+ (installed automatically by the setup script)
-- **PostgreSQL** 14+ (must be installed and running)
-- A **PostgreSQL user and database** for the application
-
-#### Quick PostgreSQL setup
-
-Run the following as the `postgres` superuser (e.g. `sudo -u postgres psql`):
-
-```sql
-CREATE USER maintainer WITH PASSWORD 'your-strong-password';
-CREATE DATABASE maintainer OWNER maintainer;
-GRANT ALL PRIVILEGES ON DATABASE maintainer TO maintainer;
-```
-
-#### Environment configuration
-
-Copy the example env file and fill in your values:
-
-```bash
-cp server/.env.example server/.env
-```
-
-Then open `server/.env` and set at minimum:
-
-| Variable | Description | How to generate |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL connection string | See example in `.env.example` |
-| `JWT_SECRET` | JWT signing secret | `openssl rand -base64 64` |
-| `SESSION_TOKEN_SECRET` | Session HMAC key | `openssl rand -hex 32` |
+Born from the need to manage servers without the cost of large operators, and made fully available under the Apache 2.0 licence so every company and organisation can deploy, adapt, and benefit freely.
 
 ---
 
-## 🛠️ Installation
+## What it looks like
 
-### Server Setup (Recommended)
+### Live System Monitoring
+![Live Telemetry Dashboard](docs/img/Live_Telemetry.png)
+*Real-time CPU, RAM, disk usage, and uptime across all connected systems*
 
-The setup script handles everything automatically:
+### System Details & Remote Terminal
+![System Details](docs/img/System_Details.png)
+*Full system info, live metrics, interactive terminal, and one-click actions — in one view*
+
+### Security & CVE Overview
+![Security Dashboard](docs/img/Security_Details.png)
+*CVE matches, security events, package health, and audit logs across your entire fleet*
+
+### Secure Login
+![Login Screen](docs/img/Login.png)
+*JWT-based authentication with a clean, modern interface*
+
+---
+
+## Why ControlSphere
+
+| | ControlSphere | Typical SaaS tools |
+|---|---|---|
+| Cost | Free, self-hosted | $50–$500 / month |
+| Data ownership | 100% yours | Vendor's servers |
+| CVE scanning | Built-in, offline | Add-on or missing |
+| Agent footprint | Single Go binary | Heavy daemons |
+| Setup time | ~2 minutes | Hours of config |
+| Open source | Apache 2.0 | Rarely |
+
+---
+
+## Get started in 2 minutes
+
+### 🐳 Option A — Docker (recommended for testing & production)
+
+No installation, no prerequisites. PostgreSQL is included.
+
+```bash
+# 1. Copy env template
+cp .env.docker.example .env
+
+# 2. Open .env and set POSTGRES_PASSWORD to a strong password
+
+# 3. Start everything
+docker compose up -d
+```
+
+Open **http://localhost:3000** — done.
+
+> `JWT_SECRET` and `SESSION_TOKEN_SECRET` are generated automatically on first startup and persisted in a Docker volume. No action needed.
+
+**Useful Docker commands:**
+```bash
+docker compose logs -f server       # follow server logs
+docker compose logs -f postgres     # follow database logs
+docker compose down                 # stop
+docker compose down -v              # stop + delete all data
+docker compose up -d --build        # rebuild after a code change
+```
+
+---
+
+### 🖥️ Option B — Native install (Debian/Ubuntu, RHEL, macOS, Alpine)
+
+One script. No prerequisites.
 
 ```bash
 sudo ./setup-server.sh
 ```
 
-The script performs:
-- ✅ **Node.js installation** (if missing or outdated)  
-- ✅ **Install npm dependencies** (with retry logic)  
-- ✅ **Generate Prisma client**  
-- ✅ **Run database migrations**  
+The script fully automates:
+- ✅ Node.js 20 LTS (installs or upgrades automatically)
+- ✅ PostgreSQL (installs if missing)
+- ✅ Database user, database, and password (auto-generated)
+- ✅ `JWT_SECRET` and `SESSION_TOKEN_SECRET` (generated via `openssl rand`)
+- ✅ `server/.env` configured — nothing to edit manually
+- ✅ npm dependencies, Prisma client, and database migrations
 
-**Supported Operating Systems:**  
-- Debian/Ubuntu (via NodeSource)  
-- macOS (via Homebrew) ![Not Tested](https://img.shields.io/badge/tested-no-lightgrey)  
-- RHEL/CentOS/Fedora (via NodeSource) ![Not Tested](https://img.shields.io/badge/tested-no-lightgrey)  
-- Alpine Linux (via apk) ![Not Tested](https://img.shields.io/badge/tested-no-lightgrey)  
-
-After setup:
+Then start the server:
 ```bash
-cd server && npm run dev
+cd server && npm run dev          # development
+# — or —
+cd server && npm run build && npm start   # production
 ```
 
-The server runs at `http://localhost:3000`.
+Server runs at **http://localhost:3000**.
 
-### Production Server
+---
 
-```bash
-cd server
-npm run build
-npm start
-```
+### 🤖 Adding systems (agents)
 
-> **Note**: If you haven't set up the server yet, run `./setup-server.sh` first in the server folder.
-
-### 🐳 Docker (Quickest way to get started)
-
-Docker Compose starts PostgreSQL and the server together — no manual database setup needed.
-
-**1. Copy the environment template and fill in your secrets:**
-
-```bash
-cp .env.docker.example .env
-```
-
-Open `.env` and set the one required value:
-
-| Variable | Required | Notes |
-|---|---|---|
-| `POSTGRES_PASSWORD` | ✅ Yes | Choose a strong password |
-| `JWT_SECRET` | ⚙️ Auto | Generated on first start, stored in `secrets_data` volume |
-| `SESSION_TOKEN_SECRET` | ⚙️ Auto | Generated on first start, stored in `secrets_data` volume |
-
-> `JWT_SECRET` and `SESSION_TOKEN_SECRET` are automatically generated with `openssl rand` on the first startup and persisted in the `secrets_data` Docker volume — they stay the same across container restarts. You can override them in `.env` if needed.
-
-**2. Build and start everything:**
-
-```bash
-docker compose up -d
-```
-
-The server is available at `http://localhost:3000`.
-
-The first startup runs all Prisma migrations automatically.
-
-**Useful commands:**
-
-```bash
-docker compose logs -f server     # follow server logs
-docker compose logs -f postgres   # follow database logs
-docker compose down               # stop everything
-docker compose down -v            # stop and delete all data
-docker compose up -d --build      # rebuild after a code change
-```
-
-> **Agent binaries**: After building the agent with `./rebuild-and-deploy-agents.sh`, the binary is automatically served from the container. The `agent_downloads` volume persists it across restarts.
-
-### Agent Setup
-
-After logging into the dashboard, you will find a **"+ Agent"** button in the top bar. It shows you the exact installation command you must run on every VM you want to monitor.
-
-#### Automatic Installation
+Once the server is running, open the dashboard and click **"+ Agent"** in the top bar. You'll see a ready-to-run install command — copy it and paste it into any Linux system you want to monitor:
 
 ```bash
 curl -sSL https://your-server/install-agent.sh | sudo bash
 ```
 
-The command is generated automatically and includes all required parameters for your server configuration. Simply copy the displayed command and execute it on your client systems.
+The agent installs itself as a systemd service and the system appears in your dashboard automatically. Nothing else to configure.
 
-#### What happens during installation?
+**What the agent installer does:**
+- Downloads the compiled binary for your architecture (amd64 / arm64)
+- Writes `/etc/maintainer-agent/config.json`
+- Registers and starts the `maintainer-agent` systemd service
+- Connects to your server — and reconnects automatically after every reboot
 
-- ✅ **Agent binary** is automatically created on the client
-- ✅ **Configuration** is created automatically  
-- ✅ **Systemd service** is registered  
-- ✅ **Automatic startup** on system boot
-- ✅ **Secure communication** with your server for remote terminal connections 
+---
 
-After the installation, the VM will automatically appear in your dashboard.
+## Features
 
-## 📖 Usage
+**Monitoring & Visibility**
+- Real-time CPU, RAM, disk, and uptime metrics across all systems
+- Live status indicators (online / offline / error)
+- Historical metric charts
 
-### Dashboard
-- Open `http://your-server:3000`
-- View all registered VMs
-- Status indicator shows online/offline
-- Live metrics for CPU, RAM, and disk
-- Click on a System to view details
+**Fleet Management**
+- Bulk operations: update all systems, run commands on multiple servers at once
+- One-click quick actions: system update, reboot, custom commands
+- Full command history per system
 
-### VM Detail Page
-- **System Info**: OS, kernel, hostname, IP  
-- **Live Metrics**: Real-time graphs and values  
-- **Terminal**: Open an interactive terminal session  
-- **Quick Actions**:
-  - System update (`apt update && apt upgrade -y`)
-  - Reboot
-  - Execute custom commands  
-- **Command History**: View all executed commands
+**Remote Access**
+- Web-based interactive terminal with PTY support (SSH-like, directly in the browser)
+- Copy & paste, dynamic resizing, coloured output
+- Encrypted connection with fingerprint verification and full audit logging
 
-### Terminal
-- Full-featured terminal in the web UI  
-- Bash shell with PTY support  
-- Supports copy & paste  
-- Supports dynamic resizing  
-- Colored output  
+**Security & Compliance**
+- Automatic CVE database download — all packages matched against known vulnerabilities
+- CSV export for audit reports and compliance documentation
+- Port scanning — monitors all open ports across your fleet
+- Package security scanner — highlights outdated packages that need updates
+- Security event dashboard
 
+**System & Access**
+- JWT-based authentication
+- Auto-discovery — agents register themselves on first connect
+- Zero-config agent — single static binary, no external dependencies
+- German and English UI
 
-## 📸 Features in Action
+---
 
-### Secure Login
-![Login Screen](docs/img/Login.png)
-*Secure JWT-based authentication with modern interface*
+## Security model
 
-### Live System Monitoring
-![Live Telemetry Dashboard](docs/img/Live_Telemetry.png)
-*Real-time monitoring of CPU, RAM, disk usage, and system uptime across all connected VMs*
+- Every agent has a unique secret key — no shared credentials
+- Agents connect **outbound only** — no inbound firewall rules needed
+- All WebSocket connections are authenticated via JWT
+- PTY sessions are encrypted and fingerprinted; every command is audit-logged
+- Root access on agents is used only for system management operations
 
-### System Details & Management
-![System Details](docs/img/System_Details.png)
-*Comprehensive system information with interactive terminal access and quick actions*
+---
 
-### Security Overview
-![Security Dashboard](docs/img/Security_Details.png)
-*Monitor security events, package updates, and system health across your infrastructure*
+## Troubleshooting
 
-## 🔒 Security
-
-- Each VM has a unique secret key  
-- WebSocket connections are authenticated  
-- The agent connects outbound only (no firewall issues)  
-- Root access is used only when necessary  
-
-## 🧰 Development
-
-### Server
+**Agent does not appear in the dashboard**
 ```bash
-cd server
-npm run dev           # start dev server
-npm run prisma:studio # open database GUI
-npm run lint          # run code linting
+sudo journalctl -u maintainer-agent -f       # live logs
+sudo systemctl status maintainer-agent       # service status
+
+# Test connection manually
+/usr/local/bin/maintainer-agent -server ws://your-server:3000/ws/agent -key your-key
 ```
 
-> **First-time setup?** Use `./setup-server.sh` – the script configures everything automatically.
+**Server does not start**
+```bash
+./setup-server.sh        # re-running the script fixes most issues
+lsof -i :3000            # check if port is in use
+cd server && npm run dev # shows detailed startup errors
+```
 
-### Agent
+---
+
+## Development
+
+**Server**
+```bash
+cd server
+npm run dev            # start dev server with hot reload
+npm run prisma:studio  # open database GUI
+npm run lint           # lint
+npm run test           # run tests
+```
+
+**Agent**
 ```bash
 cd agent
 go run main.go -server ws://localhost:3000/ws/agent -key test-key
-go build              # build binary
+go build               # build binary
 ```
 
-### Cross-Compile Agent
-
+**Cross-compile agent**
 ```bash
-# Linux AMD64
 GOOS=linux GOARCH=amd64 go build -o maintainer-agent-linux-amd64
-
-# Linux ARM64 (Raspberry Pi, etc.)
 GOOS=linux GOARCH=arm64 go build -o maintainer-agent-linux-arm64
 ```
 
-## 📁 Project Structure
-
-```
-Maintainer/
-├── server/              # Next.js server
-│   ├── src/
-│   │   ├── app/         # Next.js App Router
-│   │   │   ├── page.tsx           # Dashboard
-│   │   │   ├── machine/[id]/      # VM detail
-│   │   │   └── api/               # API routes
-│   │   ├── components/  # React components
-│   │   │   └── Terminal.tsx
-│   │   └── lib/         # Utils & core logic
-│   │       ├── websocket.ts       # WebSocket server
-│   │       ├── prisma.ts          # DB client
-│   │       └── utils.ts
-│   ├── prisma/          # Database schema
-│   └── server.js        # Custom server (WebSocket)
-│
-└── agent/               # Go agent
-    ├── main.go          # Main logic
-    ├── go.mod           # Dependencies
-    └── README.md
-```
-
-## 🎨 Design Philosophy
-
-- **Resilient under stress**: clear hierarchy, no clutter  
-- **Fast**: all critical information at a glance  
-- **Modern**: gradient backgrounds, smooth animations  
-- **Responsive**: works on desktop, tablet, and mobile  
-- **Accessible**: strong contrast, keyboard navigation  
-
-## 🔧 Configuration
-
-### Server Environment Variables
-
-Copy `server/.env.example` to `server/.env` and fill in your values:
-
-```env
-# PostgreSQL connection string
-DATABASE_URL="postgresql://maintainer:your-password@localhost:5432/maintainer?schema=public&connection_limit=20"
-
-# Generate with: openssl rand -base64 64
-JWT_SECRET=
-
-# Generate with: openssl rand -hex 32
-SESSION_TOKEN_SECRET=
-
-NODE_ENV=production
-PORT=3000
-```
-
-### Agent Config
-
-`/etc/maintainer-agent/config.json`:
-
-```json
-{
-  "server_url": "ws://your-server:3000/ws/agent",
-  "secret_key": "your-generated-secret-key"
-}
-```
-
-## 🐛 Troubleshooting
-
-### Agent does not connect
-
+**Rebuild and deploy agents**
 ```bash
-# Check logs
-sudo journalctl -u maintainer-agent -f
-
-# Check if service is running
-sudo systemctl status maintainer-agent
-
-# Test manual connection
-/usr/local/bin/maintainer-agent -server ws://localhost:3000/ws/agent -key your-key
+./rebuild-and-deploy-agents.sh
 ```
 
-### Server does not start
+---
 
-```bash
-# Run setup script again (fixes most issues)
-./setup-server.sh
+## Architecture
 
-# Check if port is available
-lsof -i :3000
-
-# Check logs
-cd server && npm run dev
+```
+Browser  ──WebSocket──►  Next.js Server (Node.js)  ◄──WebSocket──  Go Agent (per system)
+                               │
+                         PostgreSQL (Prisma)
 ```
 
-## 📊 Database Schema
+- **Server**: Next.js 14 App Router · Tailwind CSS · PostgreSQL via Prisma · Socket.io · WebSocket
+- **Agent**: Single Go binary · gopsutil (metrics) · creack/pty (terminal) · gorilla/websocket
 
-- **Machine**: VMs with status, hostname, IP, OS info  
-- **Metric**: Time-series data for CPU, RAM, and disk  
-- **Command**: History of all executed commands  
+---
 
-## 🚦 Status Logic
+## Roadmap
 
-- **Online**: Agent is connected, heartbeat < 10 seconds old  
-- **Offline**: No connection or heartbeat > 10 seconds old  
-- **Error**: Error on last command  
+- [x] Real-time monitoring dashboard
+- [x] Remote terminal (PTY, encrypted, audit-logged)
+- [x] Bulk operations across fleet
+- [x] CVE scanning with CSV export
+- [x] Historical metric charts
+- [x] Package security scanner
+- [x] Port monitoring
+- [x] Audit logging
+- [ ] Multi-user support with roles
+- [ ] Alert system (email / Slack / webhook for threshold events)
+- [ ] File manager
+- [ ] Custom scripts library
 
-## 📝 TODO / Future Features
+---
 
-- [ ] Multi-user support with roles  
-- [ ] Alert system (email/Slack for high CPU, etc.)  
-- [x] Historical charts (Chart.js)  
-- [ ] File manager for VM files  
-- [x] Log viewer for VM logs  
-- [x] Batch operations (update all VMs)  
-- [ ] Custom scripts library  
-
-## 📄 License
+## License
 
 ControlSphere is licensed under the **Apache License, Version 2.0** (SPDX: `Apache-2.0`).
 
-**Copyright (c) 2025 Tim Klement**
+**Copyright © 2025 Tim Klement**
 
-You may obtain a copy of the License at:
-```text
+```
 http://www.apache.org/licenses/LICENSE-2.0
 ```
 
-Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an **"AS IS"** basis, **WITHOUT WARRANTIES OR CONDITIONS** of any kind.
+Distributed on an **"AS IS"** basis, without warranties or conditions of any kind.  
+By contributing to this repository, you agree your contributions are licensed under the same Apache-2.0 licence.
 
-### Contributions
+---
 
-By contributing to this repository, you agree that your contributions will be licensed under the same **Apache-2.0** license.
-
-## 👨‍💻 Author
-
-Tim Klement
+*Built and maintained by **Tim Klement** · Contributions welcome · [Apache 2.0](http://www.apache.org/licenses/LICENSE-2.0)*
