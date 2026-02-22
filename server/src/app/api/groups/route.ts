@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { orchestrator } from '@/lib/orchestrator'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const groups = await prisma.group.findMany({

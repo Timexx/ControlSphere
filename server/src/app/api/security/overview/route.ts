@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { stateCache } from '@/lib/state-cache'
 
+export const dynamic = 'force-dynamic'
+
 const severityRank: Record<string, number> = {
   critical: 4,
   high: 3,

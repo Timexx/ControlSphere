@@ -3,6 +3,8 @@ import { orchestrator } from '@/lib/orchestrator'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const jobs = await orchestrator.listJobs(50)

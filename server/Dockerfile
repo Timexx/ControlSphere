@@ -1,13 +1,19 @@
 # ── Stage 1: Install dependencies ──────────────────────────────────────────
-FROM node:20-alpine AS deps
+# Use Debian Slim instead of Alpine — Prisma 5.x requires OpenSSL 1.1 / 3.x
+# libraries that are properly packaged only on glibc-based distros.
+FROM node:20-slim AS deps
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json* ./
 RUN npm ci
 
 # ── Stage 2: Build Next.js app & generate Prisma client ────────────────────
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Suppress Next.js telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -23,8 +29,11 @@ COPY . .
 RUN npm run build
 
 # ── Stage 3: Production runner ──────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:20-slim AS runner
 WORKDIR /app
+
+# openssl is needed at runtime by both Prisma and docker-entrypoint.sh
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

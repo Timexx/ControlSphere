@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client'
 import { getCveMirrorState, triggerCveMirrorOnce } from '../../../../services/cve-mirror'
 import { prisma } from '@/lib/prisma'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     const state = await getCveMirrorState()

@@ -3,6 +3,9 @@ import { readFile, writeFile, access, mkdir } from 'fs/promises'
 import { join } from 'path'
 import crypto from 'crypto'
 
+// Prevent static generation — this route reads files from disk at runtime
+export const dynamic = 'force-dynamic'
+
 // Pfad für Schlüsseldateien
 const KEYS_DIR = join(process.cwd(), '.keys')
 const PRIVATE_KEY_PATH = join(KEYS_DIR, 'agent-signing.pem')

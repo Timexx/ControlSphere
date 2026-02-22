@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { readFile, stat } from 'fs/promises'
 import { join } from 'path'
 
+export const dynamic = 'force-dynamic'
+
 // GET /downloads/maintainer-agent - Returns the agent binary for download
 // This route is used by the agent's self-update mechanism
 export async function GET(request: NextRequest) {

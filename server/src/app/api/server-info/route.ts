@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { networkInterfaces } from 'os'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     // Finde die lokale IP-Adresse

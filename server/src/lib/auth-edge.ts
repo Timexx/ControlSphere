@@ -20,20 +20,29 @@ function getJWTSecret(): string {
     return secret
 }
 
-const SECRET_KEY = getJWTSecret()
-const key = new TextEncoder().encode(SECRET_KEY)
+// Lazy initialisation — avoid crashing at import time when JWT_SECRET is not
+// yet available (e.g. during `next build`).
+let _key: Uint8Array | null = null
+let _secretVersion: string | null = null
 
-// Track the secret version to invalidate sessions on secret change
-const SECRET_VERSION = Buffer.from(SECRET_KEY).toString('base64').slice(0, 8)
+function getKeyAndVersion() {
+    if (!_key) {
+        const secret = getJWTSecret()
+        _key = new TextEncoder().encode(secret)
+        _secretVersion = Buffer.from(secret).toString('base64').slice(0, 8)
+    }
+    return { key: _key, secretVersion: _secretVersion! }
+}
 
 export async function decrypt(input: string): Promise<any> {
     try {
+        const { key, secretVersion } = getKeyAndVersion()
         const { payload } = await jwtVerify(input, key, {
             algorithms: ['HS256'],
         })
         
         // Invalidate sessions created with a different secret
-        if (payload.secretVersion !== SECRET_VERSION) {
+        if (payload.secretVersion !== secretVersion) {
             console.warn('Session invalidated: JWT_SECRET has changed')
             return null
         }

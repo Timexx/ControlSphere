@@ -3,6 +3,9 @@ import { networkInterfaces } from 'os'
 import fs from 'fs'
 import path from 'path'
 
+// Prevent static generation — this route reads files from disk at runtime
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   try {
     // Finde die lokale IP-Adresse
