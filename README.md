@@ -116,6 +116,48 @@ npm start
 
 > **Note**: If you haven't set up the server yet, run `./setup-server.sh` first in the server folder.
 
+### 🐳 Docker (Quickest way to get started)
+
+Docker Compose starts PostgreSQL and the server together — no manual database setup needed.
+
+**1. Copy the environment template and fill in your secrets:**
+
+```bash
+cp .env.docker.example .env
+```
+
+Open `.env` and set the one required value:
+
+| Variable | Required | Notes |
+|---|---|---|
+| `POSTGRES_PASSWORD` | ✅ Yes | Choose a strong password |
+| `JWT_SECRET` | ⚙️ Auto | Generated on first start, stored in `secrets_data` volume |
+| `SESSION_TOKEN_SECRET` | ⚙️ Auto | Generated on first start, stored in `secrets_data` volume |
+
+> `JWT_SECRET` and `SESSION_TOKEN_SECRET` are automatically generated with `openssl rand` on the first startup and persisted in the `secrets_data` Docker volume — they stay the same across container restarts. You can override them in `.env` if needed.
+
+**2. Build and start everything:**
+
+```bash
+docker compose up -d
+```
+
+The server is available at `http://localhost:3000`.
+
+The first startup runs all Prisma migrations automatically.
+
+**Useful commands:**
+
+```bash
+docker compose logs -f server     # follow server logs
+docker compose logs -f postgres   # follow database logs
+docker compose down               # stop everything
+docker compose down -v            # stop and delete all data
+docker compose up -d --build      # rebuild after a code change
+```
+
+> **Agent binaries**: After building the agent with `./rebuild-and-deploy-agents.sh`, the binary is automatically served from the container. The `agent_downloads` volume persists it across restarts.
+
 ### Agent Setup
 
 After logging into the dashboard, you will find a **"+ Agent"** button in the top bar. It shows you the exact installation command you must run on every VM you want to monitor.

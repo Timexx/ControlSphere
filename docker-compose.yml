@@ -1,0 +1,48 @@
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: maintainer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: maintainer
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U maintainer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── ControlSphere Server (Next.js + WebSocket) ──────────────────────────
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: "postgresql://maintainer:${POSTGRES_PASSWORD}@postgres:5432/maintainer?schema=public&connection_limit=20"
+      # Optional: override auto-generated secrets by setting these in .env
+      JWT_SECRET: ${JWT_SECRET:-}
+      SESSION_TOKEN_SECRET: ${SESSION_TOKEN_SECRET:-}
+      NODE_ENV: production
+      PORT: 3000
+    volumes:
+      # Persists auto-generated JWT_SECRET and SESSION_TOKEN_SECRET across restarts.
+      # Delete this volume only if you want new secrets to be generated.
+      - secrets_data:/app/.secrets
+      # Agent binaries served via /downloads – persisted across container restarts.
+      # Place the compiled agent binary here after running ./rebuild-and-deploy-agents.sh
+      - agent_downloads:/app/public/downloads
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  secrets_data:
+  agent_downloads:
