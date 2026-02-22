@@ -80,11 +80,19 @@ export async function GET() {
     const vulnSeverityMap = new Map<string, { critical: number; high: number; medium: number; low: number; total: number }>()
     try {
       const machineIds = machines.map(m => m.id)
+      // Select cveId so we can deduplicate: one CVE = one count per machine
       const vulnMatches = await prisma.vulnerabilityMatch.findMany({
         where: { machineId: { in: machineIds } },
-        select: { machineId: true, cve: { select: { severity: true } } }
+        select: { machineId: true, cveId: true, cve: { select: { severity: true } } }
       })
+      // Track seen CVE IDs per machine to avoid counting duplicates
+      const seenPerMachine = new Map<string, Set<string>>()
       for (const vm of vulnMatches) {
+        const seen = seenPerMachine.get(vm.machineId) || new Set<string>()
+        if (seen.has(vm.cveId)) continue // already counted this CVE for this machine
+        seen.add(vm.cveId)
+        seenPerMachine.set(vm.machineId, seen)
+
         const entry = vulnSeverityMap.get(vm.machineId) || { critical: 0, high: 0, medium: 0, low: 0, total: 0 }
         entry.total += 1
         const sev = (vm.cve?.severity || '').toLowerCase()

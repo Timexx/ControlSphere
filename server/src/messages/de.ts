@@ -85,6 +85,7 @@ const messages = {
       dashboard: 'System Übersicht',
       bulk: 'Bulk Management',
       security: 'Security',
+      secure: 'Sicher',
       audit: 'Audit Logs',
     },
     actions: {

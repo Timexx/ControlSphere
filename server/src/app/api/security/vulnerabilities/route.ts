@@ -13,14 +13,22 @@ export async function GET() {
       cve: { severity: { equals: 'high' } }
     }
 
-    const [critical, high, affectedMachineRows, criticalEvents] = await Promise.all([
-      prisma.vulnerabilityMatch.count({ where: criticalFilter }),
-      prisma.vulnerabilityMatch.count({ where: highFilter }),
+    // Count DISTINCT CVEs (not match rows) to avoid inflated numbers
+    // One CVE affecting multiple packages on one machine should count as 1
+    const [criticalCves, highCves, affectedMachineRows, criticalEvents] = await Promise.all([
+      prisma.vulnerabilityMatch.groupBy({
+        by: ['cveId'],
+        where: criticalFilter
+      }),
+      prisma.vulnerabilityMatch.groupBy({
+        by: ['cveId'],
+        where: highFilter
+      }),
       prisma.vulnerabilityMatch.groupBy({
         by: ['machineId'],
         where: criticalFilter
       }),
-      // Open security events that trigger KRITISCH status on the overview page
+      // Open security events (drift, integrity, etc.) – shown separately from CVEs
       prisma.securityEvent.count({
         where: {
           status: { in: ['open', 'ack'] },
@@ -30,8 +38,8 @@ export async function GET() {
     ])
 
     return NextResponse.json({
-      critical,
-      high,
+      critical: criticalCves.length,
+      high: highCves.length,
       affectedMachines: affectedMachineRows.length,
       criticalEvents
     })
