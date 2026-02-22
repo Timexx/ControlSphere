@@ -467,7 +467,7 @@ const messages = {
     },
     header: {
       eyebrow: 'Security Center',
-      title: 'VM Security Overview',
+      title: 'Security Overview',
       subtitle: 'Status, events, and last scans per agent.'
     },
     badges: {
