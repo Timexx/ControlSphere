@@ -15,6 +15,7 @@ I will continue to develop the project, so please join me in promoting open sour
 - **Security Dashboard**: Monitor security events and system health  
 - **Port Scanning**: Automatically scans and monitors open ports on all systems  
 - **Package Security**: Scans all installed packages and warns about outdated packages requiring updates  
+- **CVE Scanning**: Automatically downloads the latest CVE database and matches all installed packages against known vulnerabilities — with CSV export for audits and compliance reporting  
 - **JWT Authentication**: Secure token-based login  
 - **Quick Actions**: One-click system updates, reboots, and more  
 - **Auto-Discovery**: Systems automatically register with the server  
