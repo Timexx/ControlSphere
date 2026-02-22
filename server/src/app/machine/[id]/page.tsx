@@ -215,6 +215,7 @@ export default function MachinePage() {
   })
   const [showSmoothing, setShowSmoothing] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [userRole, setUserRole] = useState<string | null>(null)
   
   // Sync ref with state
   useEffect(() => {
@@ -394,9 +395,10 @@ export default function MachinePage() {
 
   const fetchMachine = async () => {
     try {
-      const [res, secRes] = await Promise.all([
+      const [res, secRes, sessionRes] = await Promise.all([
         fetch(`/api/machines/${params.id}`),
-        fetch(`/api/vms/${params.id}/security`).catch(() => null)
+        fetch(`/api/vms/${params.id}/security`).catch(() => null),
+        fetch('/api/auth/session-time').catch(() => null)
       ])
       
       // Check if unauthorized (expired cookie)
@@ -412,6 +414,13 @@ export default function MachinePage() {
       const data = await res.json()
       setMachine(data.machine)
       
+      if (sessionRes?.ok) {
+        try {
+          const sessionData = await sessionRes.json()
+          if (sessionData.role) setUserRole(sessionData.role)
+        } catch (_) {}
+      }
+
       // Process security summary from parallel fetch
       if (secRes && secRes.ok) {
         try {
@@ -700,6 +709,7 @@ export default function MachinePage() {
   }
 
   const isOnline = machine.status === 'online'
+  const isViewer = userRole === 'viewer'
   const latestMetric = machine.metrics?.[0]
   const lastSeenDate = new Date(machine.lastSeen)
   const lastSeenDisplay = Date.now() - lastSeenDate.getTime() <= 60_000
@@ -897,14 +907,16 @@ export default function MachinePage() {
                 )}
                 {isOnline ? t('status.online') : t('status.offline')}
               </span>
-              <button
-                onClick={() => setShowDeleteConfirm(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-red-500/40 text-red-100 hover:bg-red-500/10 transition-colors"
-                title={t('actions.delete.title')}
-              >
-                <Trash2 className="h-4 w-4" />
-                <span>{t('actions.delete.label')}</span>
-              </button>
+              {!isViewer && (
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-red-500/40 text-red-100 hover:bg-red-500/10 transition-colors"
+                  title={t('actions.delete.title')}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>{t('actions.delete.label')}</span>
+                </button>
+              )}
             </div>
           </div>
         </header>
@@ -1029,34 +1041,38 @@ export default function MachinePage() {
                 {t('actions.title')}
               </h2>
               <div className="space-y-3">
-                <ActionButton
-                  onClick={() => setPendingTerminalAuth(true)}
-                  disabled={!isOnline || rebooting}
-                  tone="primary"
-                  icon={<TerminalIcon className="h-5 w-5" />}
-                  label={t('actions.openTerminal')}
-                />
-                <ActionButton
-                  onClick={() => handleCommand('apt update && apt upgrade -y')}
-                  disabled={!isOnline || !!executing || rebooting}
-                  tone="success"
-                  icon={<Download className="h-5 w-5" />}
-                  label={t('actions.systemUpdate')}
-                />
-                <ActionButton
-                  onClick={updateAgent}
-                  disabled={!isOnline || !!executing || rebooting}
-                  tone="purple"
-                  icon={<PackageCheck className="h-5 w-5" />}
-                  label={t('actions.agentUpdate')}
-                />
-                <ActionButton
-                  onClick={() => handleCommand('reboot')}
-                  disabled={!isOnline || !!executing || rebooting}
-                  tone="warning"
-                  icon={<Power className="h-5 w-5" />}
-                  label={t('actions.reboot')}
-                />
+                {!isViewer && (
+                  <>
+                    <ActionButton
+                      onClick={() => setPendingTerminalAuth(true)}
+                      disabled={!isOnline || rebooting}
+                      tone="primary"
+                      icon={<TerminalIcon className="h-5 w-5" />}
+                      label={t('actions.openTerminal')}
+                    />
+                    <ActionButton
+                      onClick={() => handleCommand('apt update && apt upgrade -y')}
+                      disabled={!isOnline || !!executing || rebooting}
+                      tone="success"
+                      icon={<Download className="h-5 w-5" />}
+                      label={t('actions.systemUpdate')}
+                    />
+                    <ActionButton
+                      onClick={updateAgent}
+                      disabled={!isOnline || !!executing || rebooting}
+                      tone="purple"
+                      icon={<PackageCheck className="h-5 w-5" />}
+                      label={t('actions.agentUpdate')}
+                    />
+                    <ActionButton
+                      onClick={() => handleCommand('reboot')}
+                      disabled={!isOnline || !!executing || rebooting}
+                      tone="warning"
+                      icon={<Power className="h-5 w-5" />}
+                      label={t('actions.reboot')}
+                    />
+                  </>
+                )}
                 <ActionButton
                   onClick={fetchMachine}
                   disabled={rebooting}
@@ -1477,23 +1493,25 @@ export default function MachinePage() {
                       rows={8}
                       className="w-full rounded-lg border border-slate-800 bg-[#0f161d] px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-400 resize-none"
                       placeholder={t('notesPanel.placeholder')}
-                      disabled={notesSaving}
+                      disabled={notesSaving || isViewer}
                     />
-                    <div className="flex justify-end mt-3">
-                      <button
-                        onClick={saveNotes}
-                        disabled={notesSaving || (!notesDirty && (machine.notes || '') === notesDraft)}
-                        className={cn(
-                          "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-                          notesSaving || (!notesDirty && (machine.notes || '') === notesDraft)
-                            ? "bg-slate-800 text-slate-500 cursor-not-allowed"
-                            : "bg-cyan-600 text-white hover:bg-cyan-500"
-                        )}
-                      >
-                        <Save className="h-4 w-4" />
-                        <span>{notesSaving ? t('notesPanel.saving') : t('notesPanel.save')}</span>
-                      </button>
-                    </div>
+                    {!isViewer && (
+                      <div className="flex justify-end mt-3">
+                        <button
+                          onClick={saveNotes}
+                          disabled={notesSaving || (!notesDirty && (machine.notes || '') === notesDraft)}
+                          className={cn(
+                            "inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                            notesSaving || (!notesDirty && (machine.notes || '') === notesDraft)
+                              ? "bg-slate-800 text-slate-500 cursor-not-allowed"
+                              : "bg-cyan-600 text-white hover:bg-cyan-500"
+                          )}
+                        >
+                          <Save className="h-4 w-4" />
+                          <span>{notesSaving ? t('notesPanel.saving') : t('notesPanel.save')}</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1509,7 +1527,7 @@ export default function MachinePage() {
                   </div>
 
                   {/* Link Form */}
-                  <form onSubmit={addLink} className="space-y-3">
+                  {!isViewer && <form onSubmit={addLink} className="space-y-3">
                     <div className="grid grid-cols-1 md:grid-cols-[2fr_3fr_2fr_auto] gap-3">
                       <input
                         type="text"
@@ -1549,7 +1567,7 @@ export default function MachinePage() {
                         <span>{linkSaving ? t('notesPanel.links.saving') : t('notesPanel.links.add')}</span>
                       </button>
                     </div>
-                  </form>
+                  </form>}
 
                   {/* Links List */}
                   <div className="space-y-2">
@@ -1579,18 +1597,20 @@ export default function MachinePage() {
                             <p className="text-xs text-slate-400 mt-1 truncate">{link.description}</p>
                           )}
                         </a>
-                        <button
-                          onClick={() => removeLink(link.id)}
-                          disabled={linkRemoving === link.id}
-                          className="ml-3 text-slate-500 hover:text-red-400 p-1 rounded-md hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
-                          title={t('notesPanel.links.remove')}
-                        >
-                          {linkRemoving === link.id ? (
-                            <RefreshCw className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
-                        </button>
+                        {!isViewer && (
+                          <button
+                            onClick={() => removeLink(link.id)}
+                            disabled={linkRemoving === link.id}
+                            className="ml-3 text-slate-500 hover:text-red-400 p-1 rounded-md hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                            title={t('notesPanel.links.remove')}
+                          >
+                            {linkRemoving === link.id ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -525,18 +525,36 @@ export class SecureRemoteTerminalService {
   /**
    * Helper: Validate user has access to machine
    * ISO 27001 A.13.1.3: Data isolation and access control
-   *
-   * TODO: Implement based on your authorization model
    */
   private async validateUserMachineAccess(userId: string, machineId: string): Promise<boolean> {
-    // For now, all users can access all machines
-    // In production: Check if userId has 'read' or 'admin' role for machineId
-    // Example:
-    // const role = await this.prisma.machineAccess.findFirst({
-    //   where: { userId, machineId }
-    // })
-    // return !!role
-    return true
+    try {
+      // Use relative imports — @/ aliases don't resolve in the custom server (ts-node) context
+      const { canAccessMachine } = await import('../../lib/authorization')
+      
+      // Fetch user role from DB
+      const { prisma } = await import('../../lib/prisma')
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { role: true, active: true },
+      })
+
+      if (!user || !user.active) return false
+
+      // Viewers cannot access terminals at all
+      if (user.role === 'viewer') {
+        this.logger.warn('TerminalAccessDenied', {
+          reason: 'Viewer role cannot access terminals',
+          userId,
+          machineId,
+        })
+        return false
+      }
+
+      return canAccessMachine(userId, user.role as any, machineId)
+    } catch (error) {
+      this.logger.error('validateUserMachineAccess failed', { userId, machineId, error })
+      return false
+    }
   }
 
   /**

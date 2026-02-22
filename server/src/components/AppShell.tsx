@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Server, Layers, Plus, LogOut, ShieldCheck, ShieldAlert, Menu, X, TerminalSquare, Settings } from 'lucide-react'
+import { Server, Layers, Plus, LogOut, ShieldCheck, ShieldAlert, Menu, X, TerminalSquare, Settings, Users } from 'lucide-react'
 import { type ReactNode, useState, useEffect, useRef, useCallback } from 'react'
 import { cn } from '@/lib/utils'
 import { useTranslations } from 'next-intl'
@@ -32,6 +32,7 @@ export default function AppShell({
   const [showExpiryDialog, setShowExpiryDialog] = useState(false)
   const [showRefreshTooltip, setShowRefreshTooltip] = useState(false)
   const [internalLoggingOut, setInternalLoggingOut] = useState(false)
+  const [userRole, setUserRole] = useState<string | null>(null)
   const remainingRef = useRef<number | null>(null)
   const expiryDialogRef = useRef(false)
 
@@ -45,6 +46,11 @@ export default function AppShell({
         const prevRemaining = remainingRef.current
         remainingRef.current = remaining
         setRemainingTime(remaining)
+
+        // Update user role from session
+        if (data.role) {
+          setUserRole(data.role)
+        }
 
         // Show dialog when time drops below 60 seconds
         if (
@@ -164,15 +170,18 @@ export default function AppShell({
     }
   }
 
+  const isViewer = userRole === 'viewer'
+
   const navItems = [
     { href: '/', label: t('nav.dashboard'), icon: Server },
-    { href: '/bulk-management', label: t('nav.bulk'), icon: Layers },
+    ...(!isViewer ? [{ href: '/bulk-management', label: t('nav.bulk'), icon: Layers }] : []),
     { href: '/security', label: t('nav.security'), icon: ShieldCheck },
-    { href: '/audit-logs', label: t('nav.audit'), icon: TerminalSquare },
+    ...(userRole === 'admin' ? [{ href: '/audit-logs', label: t('nav.audit'), icon: TerminalSquare }] : []),
   ];
 
   const bottomNavItems = [
-    { href: '/settings', label: t('nav.settings'), icon: Settings },
+    ...(userRole === 'admin' ? [{ href: '/settings/users', label: t('nav.users'), icon: Users }] : []),
+    ...(userRole === 'admin' ? [{ href: '/settings', label: t('nav.settings'), icon: Settings }] : []),
   ];
 
   return (
@@ -207,13 +216,15 @@ export default function AppShell({
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={onAddAgent}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 min-w-24 h-10 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
-            >
-              <Plus className="h-4 w-4" />
-              <span>{t('actions.addAgent')}</span>
-            </button>
+            {!isViewer && (
+              <button
+                onClick={onAddAgent}
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 min-w-24 h-10 rounded-lg border border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white transition-all"
+              >
+                <Plus className="h-4 w-4" />
+                <span>{t('actions.addAgent')}</span>
+              </button>
+            )}
             <Link
               href="/security"
               className={cn(

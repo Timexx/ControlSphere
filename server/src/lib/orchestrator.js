@@ -220,6 +220,7 @@ class JobOrchestrator {
           : null,
         strategy: JSON.stringify(strategyObj),
         totalTargets: targets.length,
+        createdByUserId: payload.createdByUserId || null,
         executions: {
           create: targets.map((m) => ({
             machineId: m.id
@@ -814,8 +815,9 @@ class JobOrchestrator {
     }
   }
 
-  async listJobs(limit = 20) {
+  async listJobs(limit = 20, filterUserId = null) {
     const jobs = await prisma.job.findMany({
+      where: filterUserId ? { createdByUserId: filterUserId } : undefined,
       orderBy: { createdAt: 'desc' },
       take: limit,
       include: {

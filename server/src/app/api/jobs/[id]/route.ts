@@ -7,11 +7,20 @@ export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const session = await getSession()
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const role = (session.user as any).role || 'user'
+  if (role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   try {
     const job = await orchestrator.getJob(params.id)
 
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 })
+    }
+
+    if (role === 'user' && (job as any).createdByUserId && (job as any).createdByUserId !== session.user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     return NextResponse.json({ job })
@@ -25,14 +34,23 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const session = await getSession()
+  if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const role = (session.user as any).role || 'user'
+  if (role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
   try {
     const job = await prisma.job.findUnique({
       where: { id: params.id },
-      select: { id: true, status: true, command: true }
+      select: { id: true, status: true, command: true, createdByUserId: true }
     })
 
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 })
+    }
+
+    if (role === 'user' && (job as any).createdByUserId && (job as any).createdByUserId !== session.user.id) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
     // Abort running job to clean in-memory state
@@ -45,7 +63,6 @@ export async function DELETE(
 
     // Audit log for job deletion
     try {
-      const session = await getSession()
       const ip = request.ip || request.headers.get('x-forwarded-for') || 'unknown'
       const userAgent = request.headers.get('user-agent') || 'unknown'
 
@@ -53,7 +70,7 @@ export async function DELETE(
         data: {
           action: 'BULK_JOB_DELETED',
           eventType: 'bulk_operation',
-          userId: session?.user?.id || null,
+          userId: session.user.id,
           severity: 'info',
           details: JSON.stringify({
             jobId: job.id,

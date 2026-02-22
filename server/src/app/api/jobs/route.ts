@@ -7,7 +7,16 @@ export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
-    const jobs = await orchestrator.listJobs(50)
+    const session = await getSession()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const role = (session.user as any).role || 'user'
+    if (role === 'viewer') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    // Admins see all jobs; users see only their own
+    const jobs = await orchestrator.listJobs(50, role === 'admin' ? null : session.user.id)
     return NextResponse.json({ jobs })
   } catch (error) {
     console.error('Error fetching jobs:', error)
@@ -18,6 +27,15 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
+    const session = await getSession()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+    const role = (session.user as any).role || 'user'
+    if (role === 'viewer') {
+      return NextResponse.json({ error: 'Forbidden: Viewers cannot create jobs' }, { status: 403 })
+    }
+
     const command = (body.command || '').trim()
     const targetType = body.targetType || 'adhoc'
     const machineIds: string[] = Array.isArray(body.machineIds) ? body.machineIds : []
@@ -40,7 +58,8 @@ export async function POST(request: NextRequest) {
       machineIds,
       dynamicQuery: body.dynamicQuery || body.query,
       strategy: body.strategy || {},
-      dryRun: Boolean(body.dryRun)
+      dryRun: Boolean(body.dryRun),
+      createdByUserId: session.user.id,
     }
 
     const result = await orchestrator.createJob(payload)

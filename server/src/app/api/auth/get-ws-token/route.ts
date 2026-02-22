@@ -51,7 +51,7 @@ export async function GET() {
 
     const jwtToken = await jwtAuthService.sign({
       sub: sessionPayload.user.id,
-      role: 'user'
+      role: sessionPayload.user.role || 'user'
     })
 
     return NextResponse.json({ token: jwtToken })

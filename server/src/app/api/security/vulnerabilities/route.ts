@@ -1,15 +1,27 @@
 import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { getSession } from '@/lib/auth'
+import { getAccessibleMachineIds } from '@/lib/authorization'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
+    const session = await getSession()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const accessibleIds = await getAccessibleMachineIds(session.user.id, (session.user as any).role || 'user')
+    const machineFilter = accessibleIds !== 'all' ? { machineId: { in: accessibleIds } } : {}
+
     const criticalFilter = {
+      ...machineFilter,
       cve: { severity: { equals: 'critical' } }
     }
     const highFilter = {
+      ...machineFilter,
       cve: { severity: { equals: 'high' } }
     }
 
@@ -31,6 +43,7 @@ export async function GET() {
       // Open security events (drift, integrity, etc.) – shown separately from CVEs
       prisma.securityEvent.count({
         where: {
+          ...machineFilter,
           status: { in: ['open', 'ack'] },
           severity: { in: ['critical', 'high'] }
         }

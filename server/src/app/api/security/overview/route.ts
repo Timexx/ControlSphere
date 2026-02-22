@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { stateCache } from '@/lib/state-cache'
+import { getSession } from '@/lib/auth'
+import { getAccessibleMachineIds } from '@/lib/authorization'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,14 +17,27 @@ const severityRank: Record<string, number> = {
 
 export async function GET() {
   try {
+    const session = await getSession()
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const accessibleIds = await getAccessibleMachineIds(session.user.id, (session.user as any).role || 'user')
+    const machineWhere = accessibleIds !== 'all' ? { id: { in: accessibleIds } } : {}
+
     // Use cache for machine+event data; only hit DB for scan/package info
     const cachedMachines = stateCache.ready ? stateCache.getMachines() : null
+    // When using cache, filter it client-side if needed
+    const filteredCache = cachedMachines && accessibleIds !== 'all'
+      ? cachedMachines.filter((m: { id: string }) => (accessibleIds as string[]).includes(m.id))
+      : cachedMachines
 
     // Fetch machines, events, and packages ALL in parallel
-    const [machines, openEvents, securityPackages] = cachedMachines
-      ? [cachedMachines, [] as Array<{ machineId: string; severity: string }>, await prisma.vMPackage.findMany({ where: { status: 'security_update' }, select: { machineId: true } }).catch(() => [] as Array<{ machineId: string }>)]
+    const [machines, openEvents, securityPackages] = filteredCache
+      ? [filteredCache, [] as Array<{ machineId: string; severity: string }>, await prisma.vMPackage.findMany({ where: { status: 'security_update', ...(machineWhere.id ? { machineId: machineWhere.id } : {}) }, select: { machineId: true } }).catch(() => [] as Array<{ machineId: string }>)]
       : await Promise.all([
       prisma.machine.findMany({
+        where: machineWhere,
         orderBy: { createdAt: 'asc' },
         select: {
           id: true,
@@ -32,14 +47,14 @@ export async function GET() {
         }
       }),
       prisma.securityEvent.findMany({
-        where: { status: { in: ['open', 'ack'] } },
+        where: { ...machineWhere.id ? { machineId: machineWhere.id } : {}, status: { in: ['open', 'ack'] } },
         select: { machineId: true, severity: true }
       }).catch((err) => {
         console.error('Error fetching security events (non-fatal):', err)
         return [] as Array<{ machineId: string; severity: string }>
       }),
       prisma.vMPackage.findMany({
-        where: { status: 'security_update' },
+        where: { ...machineWhere.id ? { machineId: machineWhere.id } : {}, status: 'security_update' },
         select: { machineId: true }
       }).catch((err) => {
         console.error('Error fetching security update packages (non-fatal):', err)
@@ -48,9 +63,9 @@ export async function GET() {
     ])
 
     const eventSummary = new Map<string, { count: number; highest: string }>()
-    if (cachedMachines) {
-      // Use cached event summaries directly
-      for (const m of cachedMachines) {
+    if (filteredCache) {
+      // Use cached event summaries directly (already filtered to accessible machines)
+      for (const m of filteredCache) {
         if (m.openSecurityEvents > 0) {
           eventSummary.set(m.id, { count: m.openSecurityEvents, highest: m.highestSeverity ?? 'info' })
         }

@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     const user = await prisma.user.update({
       where: { id: session.user.id as string },
       data: { language: requestedLanguage },
-      select: { id: true, username: true, language: true },
+      select: { id: true, username: true, language: true, role: true },
     })
     console.log('[API /api/user/language] User updated:', user)
 
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     })
     console.log('[API /api/user/language] New session encrypted')
 
-    const response = NextResponse.json({ success: true, language: user.language })
+    const response = NextResponse.json({ success: true, language: user.language, role: user.role })
 
     // Only mark cookies as secure when the request is actually over HTTPS.
     // On local/LAN HTTP, a secure cookie would be dropped and the updated

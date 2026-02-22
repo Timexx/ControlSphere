@@ -39,9 +39,10 @@ export default function LanguageSetupPage() {
         throw new Error(data.error || t('errors.saveFailed'))
       }
 
-      console.log('[LanguageSetup] Success! Redirecting to /server-setup')
-      // Force a complete page reload from server to pick up new cookies
-      window.location.replace('/server-setup')
+      console.log('[LanguageSetup] Success! Role:', data.role)
+      // Admins go to server-setup, regular users go to dashboard
+      const target = data.role === 'admin' ? '/server-setup' : '/'
+      window.location.replace(target)
     } catch (err: any) {
       console.error('[LanguageSetup] Error:', err)
       setError(err.message || t('errors.saveFailed'))

@@ -1,12 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { stateCache } from '@/lib/state-cache'
+import { getSession } from '@/lib/auth'
+import { canAccessMachine } from '@/lib/authorization'
+import { createAuditEntry, AuditActions } from '@/lib/audit'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    // Access control
+    const session = await getSession()
+    const userId = session?.user?.id
+    const role = session?.user?.role || 'viewer'
+    if (userId) {
+      const hasAccess = await canAccessMachine(userId, role as any, params.id)
+      if (!hasAccess) {
+        await createAuditEntry({
+          action: AuditActions.MACHINE_ACCESS_DENIED,
+          userId,
+          machineId: params.id,
+          severity: 'warn',
+          details: { reason: 'No machine access', role },
+        })
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      }
+    }
+
     // Fast path: serve base data from cache, enrich with commands/links from DB
     const cached = stateCache.ready ? stateCache.getMachine(params.id) : null
     if (cached) {

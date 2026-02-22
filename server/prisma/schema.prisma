@@ -11,14 +11,34 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  username  String   @unique
-  password  String
-  language  String?  // User's preferred language (e.g., 'en', 'de')
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  username    String   @unique
+  password    String
+  role        String   @default("user") // admin, user, viewer
+  active      Boolean  @default(true)
+  language    String?  // User's preferred language (e.g., 'en', 'de')
+  lastLoginAt DateTime?
+  createdBy   String?  // ID of admin who created this user (null for initial setup user)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  auditLogs AuditLog[]
+  auditLogs     AuditLog[]
+  machineAccess UserMachineAccess[]
+}
+
+model UserMachineAccess {
+  id         String   @id @default(cuid())
+  userId     String
+  machineId  String
+  assignedAt DateTime @default(now())
+  assignedBy String   // ID of admin who assigned access
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, machineId])
+  @@index([userId])
+  @@index([machineId])
 }
 
 model Machine {
@@ -33,6 +53,7 @@ model Machine {
   secretVersion   Int      @default(1) // For secret rotation support
   secretRotatedAt DateTime? // Timestamp of last secret rotation
   notes           String?  @db.Text
+  createdBy       String?  // ID of user who registered/added this machine
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   
@@ -50,6 +71,7 @@ model Machine {
   securityEvents SecurityEvent[]
   vulnerabilityMatches VulnerabilityMatch[]
   scanProgress ScanProgressState? @relation("MachineScanProgress")
+  userAccess   UserMachineAccess[]
   
   @@index([status])
   @@index([lastSeen])
@@ -171,6 +193,7 @@ model Job {
   targetQuery  String?
   strategy     String?
   totalTargets Int      @default(0)
+  createdByUserId String?  // null = legacy job created before multi-user support
   startedAt    DateTime?
   completedAt  DateTime?
   createdAt    DateTime @default(now())

@@ -27,20 +27,22 @@ export async function GET() {
       )
     }
 
-    // Decode JWT to get exp time (without verification - just reading exp)
+    // Decode JWT to get exp time and role (without verification - just reading payload)
     try {
       const payload = sessionCookie.split('.')[1]
       const decoded = JSON.parse(Buffer.from(payload, 'base64').toString())
 
       if (!decoded.exp) {
-        return NextResponse.json({ remainingTime: null }, { headers: CORS_HEADERS })
+        return NextResponse.json({ remainingTime: null, role: null }, { headers: CORS_HEADERS })
       }
 
       const now = Math.floor(Date.now() / 1000)
       const remaining = decoded.exp - now
+      const role = decoded.user?.role || 'user'
+      const userId = decoded.user?.id || null
 
       return NextResponse.json(
-        { remainingTime: remaining > 0 ? remaining : 0 },
+        { remainingTime: remaining > 0 ? remaining : 0, role, userId },
         { headers: CORS_HEADERS }
       )
     } catch {

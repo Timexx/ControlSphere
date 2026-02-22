@@ -22,6 +22,28 @@ const PUBLIC_PATHS = new Set([
   '/android-chrome-512x512.png',
 ])
 
+// Paths that require admin role
+const ADMIN_PATHS_EXACT = new Set([
+  '/settings/users',
+])
+
+// Paths that are blocked for viewer role
+const VIEWER_BLOCKED_PATHS_PREFIX = ['/bulk-management', '/api/jobs']
+
+function isViewerBlockedPath(pathname: string) {
+  return VIEWER_BLOCKED_PATHS_PREFIX.some((p) => pathname === p || pathname.startsWith(p + '/'))
+}
+
+function isAdminPath(pathname: string) {
+  return (
+    ADMIN_PATHS_EXACT.has(pathname) ||
+    pathname.startsWith('/api/admin/') ||
+    pathname === '/settings' || pathname.startsWith('/settings/') ||
+    pathname === '/audit-logs' || pathname.startsWith('/audit-logs/') ||
+    pathname === '/api/audit-logs' || pathname.startsWith('/api/audit-logs/')
+  )
+}
+
 function isBypassedPath(pathname: string) {
   return (
     pathname.startsWith('/_next') ||
@@ -82,6 +104,28 @@ export async function middleware(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
     return withLocaleCookie(NextResponse.redirect(new URL('/login', request.url)), preferredLocale)
+  }
+
+  // Enforce admin-only routes
+  if (isAdminPath(pathname)) {
+    const role = (session as any)?.user?.role
+    if (role !== 'admin') {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Forbidden: Admin access required' }, { status: 403 })
+      }
+      return withLocaleCookie(NextResponse.redirect(new URL('/', request.url)), preferredLocale)
+    }
+  }
+
+  // Enforce viewer-blocked routes
+  if (isViewerBlockedPath(pathname)) {
+    const role = (session as any)?.user?.role
+    if (role === 'viewer') {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json({ error: 'Forbidden: Viewers cannot access bulk management' }, { status: 403 })
+      }
+      return withLocaleCookie(NextResponse.redirect(new URL('/', request.url)), preferredLocale)
+    }
   }
 
   // Enforce language onboarding

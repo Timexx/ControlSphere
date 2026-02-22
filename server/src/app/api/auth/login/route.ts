@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyPassword, encrypt } from '@/lib/auth'
 import { cookies } from 'next/headers'
+import { createAuditEntry, AuditActions } from '@/lib/audit'
 
 export async function POST(request: Request) {
   try {
@@ -30,6 +31,21 @@ export async function POST(request: Request) {
       )
     }
 
+    // Block deactivated users
+    if (!user.active) {
+      console.log('❌ User deactivated:', username)
+      await createAuditEntry({
+        action: AuditActions.USER_LOGIN_BLOCKED,
+        userId: user.id,
+        severity: 'warn',
+        details: { reason: 'Account deactivated', username },
+      })
+      return NextResponse.json(
+        { error: 'Account is deactivated' },
+        { status: 403 }
+      )
+    }
+
     console.log('✓ User found:', user.username, '(id:', user.id + ')')
     console.log('  Password hash length:', user.password?.length || 0)
 
@@ -45,11 +61,22 @@ export async function POST(request: Request) {
       )
     }
 
-    // Login success
-    console.log('✅ Login successful for user:', username)
+    // Update last login timestamp
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() },
+    })
+
+    // Login success — include role in session
+    console.log('✅ Login successful for user:', username, 'role:', user.role)
     const expires = new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
     const session = await encrypt({
-      user: { id: user.id, username: user.username, language: user.language ?? null },
+      user: {
+        id: user.id,
+        username: user.username,
+        language: user.language ?? null,
+        role: user.role,
+      },
       expires,
     })
 

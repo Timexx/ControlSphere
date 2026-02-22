@@ -61,10 +61,10 @@ export async function POST(request: NextRequest) {
     })
     console.log('✓ Database updated. User language:', updatedUser.language)
 
-    // Create a new session JWT with the updated language
+    // Create a new session JWT with the updated language (preserve role)
     const expires = new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
     const newSession = await encrypt({
-      user: { id: userId, username, language },
+      user: { id: userId, username, language, role: updatedUser.role },
       expires,
     })
     console.log('✓ New session JWT created with language:', language)

@@ -1,16 +1,30 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { stateCache } from '@/lib/state-cache'
+import { getSession } from '@/lib/auth'
+import { getAccessibleMachineIds, filterMachinesByAccess } from '@/lib/authorization'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   try {
+    // Get session for role-based filtering
+    const session = await getSession()
+    const userId = session?.user?.id
+    const role = session?.user?.role || 'viewer'
+    const accessibleIds = userId
+      ? await getAccessibleMachineIds(userId, role as any)
+      : []
+
     // Serve from in-memory cache when warm (~0 ms)
     if (stateCache.ready) {
-      const machines = stateCache.getMachines()
+      let machines = stateCache.getMachines()
       // Sort by createdAt ascending to match DB path ordering
       machines.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+
+      // Filter by access
+      machines = filterMachinesByAccess(machines, accessibleIds)
+
       const machinesWithSummary = machines.map((m) => ({
         id: m.id,
         hostname: m.hostname,
@@ -82,7 +96,10 @@ export async function GET() {
       }
     })
 
-    return NextResponse.json({ machines: machinesWithSummary })
+    // Filter by user access
+    const filtered = filterMachinesByAccess(machinesWithSummary, accessibleIds)
+
+    return NextResponse.json({ machines: filtered })
   } catch (error) {
     console.error('Error fetching machines:', error)
     return NextResponse.json(

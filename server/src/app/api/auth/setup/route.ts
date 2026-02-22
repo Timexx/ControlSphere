@@ -30,13 +30,19 @@ export async function POST(request: Request) {
       data: {
         username,
         password: hashedPassword,
+        role: 'admin', // First user is always admin
       },
     })
 
     // Auto login after setup
     const expires = new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
     const session = await encrypt({
-      user: { id: user.id, username: user.username, language: user.language ?? null },
+      user: {
+        id: user.id,
+        username: user.username,
+        language: user.language ?? null,
+        role: user.role,
+      },
       expires,
     })
 
