@@ -55,6 +55,17 @@ export async function POST(request: Request) {
     })
     console.log('[API /api/user/language] User updated:', user)
 
+    // Check if server has already been configured
+    const serverConfig = await prisma.serverConfig.findUnique({
+      where: { id: 'global' },
+      select: { serverUrl: true },
+    })
+    const needsServerSetup = user.role === 'admin' && !serverConfig?.serverUrl
+    console.log('[API /api/user/language] Server config check:', { 
+      hasServerUrl: !!serverConfig?.serverUrl, 
+      needsServerSetup 
+    })
+
     const expires = new Date(Date.now() + 30 * 60 * 1000)
     const newSession = await encrypt({
       user,
@@ -62,7 +73,12 @@ export async function POST(request: Request) {
     })
     console.log('[API /api/user/language] New session encrypted')
 
-    const response = NextResponse.json({ success: true, language: user.language, role: user.role })
+    const response = NextResponse.json({ 
+      success: true, 
+      language: user.language, 
+      role: user.role,
+      needsServerSetup 
+    })
 
     // Only mark cookies as secure when the request is actually over HTTPS.
     // On local/LAN HTTP, a secure cookie would be dropped and the updated

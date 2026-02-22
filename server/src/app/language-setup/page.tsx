@@ -39,9 +39,11 @@ export default function LanguageSetupPage() {
         throw new Error(data.error || t('errors.saveFailed'))
       }
 
-      console.log('[LanguageSetup] Success! Role:', data.role)
-      // Admins go to server-setup, regular users go to dashboard
-      const target = data.role === 'admin' ? '/server-setup' : '/'
+      console.log('[LanguageSetup] Success! Role:', data.role, 'needsServerSetup:', data.needsServerSetup)
+      
+      // Only go to server-setup if admin AND server is not configured yet
+      // Otherwise go to dashboard for everyone (admins & users)
+      const target = data.needsServerSetup ? '/server-setup' : '/'
       window.location.replace(target)
     } catch (err: any) {
       console.error('[LanguageSetup] Error:', err)
