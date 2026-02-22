@@ -179,30 +179,33 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     fi
 done
 
+# Ensure .env exists before running Prisma
+if [ ! -f ".env" ]; then
+    if [ -f ".env.example" ]; then
+        echo -e "${YELLOW}No .env file found – copying .env.example to .env...${NC}"
+        cp .env.example .env
+        echo -e "${RED}ACTION REQUIRED: Open server/.env and fill in the required values:${NC}"
+        echo -e "${YELLOW}  DATABASE_URL         – PostgreSQL connection string${NC}"
+        echo -e "${YELLOW}  JWT_SECRET           – run: openssl rand -base64 64${NC}"
+        echo -e "${YELLOW}  SESSION_TOKEN_SECRET – run: openssl rand -hex 32${NC}"
+        echo ""
+        echo -e "${RED}Setup aborted. Configure server/.env and re-run ./setup-server.sh${NC}"
+        exit 1
+    else
+        echo -e "${RED}No .env file found and no .env.example available.${NC}"
+        echo -e "${YELLOW}Create server/.env with at least:${NC}"
+        echo -e '  DATABASE_URL="postgresql://user:password@localhost:5432/maintainer?schema=public"'
+        echo -e '  JWT_SECRET=<64-character random string>'
+        echo -e '  SESSION_TOKEN_SECRET=<32-byte hex string>'
+        exit 1
+    fi
+fi
+
 echo -e "${GREEN}Generating Prisma client...${NC}"
 npm run prisma:generate
 
 echo -e "${GREEN}Running database migrations...${NC}"
 npm run prisma:migrate
-
-# Fix database permissions - SQLite needs write access to both the file and directory
-echo -e "${GREEN}Setting database permissions...${NC}"
-DB_FILE="./prisma/dev.db"
-DB_DIR="./prisma"
-
-if [ -f "$DB_FILE" ]; then
-    chmod 664 "$DB_FILE" 2>/dev/null || sudo chmod 664 "$DB_FILE" 2>/dev/null || true
-    chmod 664 "${DB_FILE}-journal" 2>/dev/null || true
-    chmod 664 "${DB_FILE}-wal" 2>/dev/null || true
-    chmod 664 "${DB_FILE}-shm" 2>/dev/null || true
-    echo -e "${GREEN}Database file permissions set ✓${NC}"
-fi
-
-# Ensure the prisma directory is writable (SQLite needs this for journal files)
-if [ -d "$DB_DIR" ]; then
-    chmod 775 "$DB_DIR" 2>/dev/null || sudo chmod 775 "$DB_DIR" 2>/dev/null || true
-    echo -e "${GREEN}Database directory permissions set ✓${NC}"
-fi
 
 echo ""
 echo -e "${GREEN}============================================${NC}"

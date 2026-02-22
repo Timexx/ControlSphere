@@ -29,7 +29,7 @@ And so much more to discover 🧭
 ### Server (Next.js)
 - Modern Next.js 14 App Router  
 - Tailwind CSS for a premium, consistent UI  
-- SQLite database (via Prisma)  
+- PostgreSQL database (via Prisma)  
 - WebSocket communication for real-time updates  
 - Socket.io for bidirectional events  
 
@@ -39,6 +39,42 @@ And so much more to discover 🧭
 - Collects system metrics  
 - PTY support for interactive terminal sessions – with encrypted connection and fingerprint including audit logging
 - Auto-reconnect on connection loss  
+
+## ✅ Prerequisites
+
+Before you start, make sure the following is available on your server:
+
+- **Node.js** 18+ (installed automatically by the setup script)
+- **PostgreSQL** 14+ (must be installed and running)
+- A **PostgreSQL user and database** for the application
+
+#### Quick PostgreSQL setup
+
+Run the following as the `postgres` superuser (e.g. `sudo -u postgres psql`):
+
+```sql
+CREATE USER maintainer WITH PASSWORD 'your-strong-password';
+CREATE DATABASE maintainer OWNER maintainer;
+GRANT ALL PRIVILEGES ON DATABASE maintainer TO maintainer;
+```
+
+#### Environment configuration
+
+Copy the example env file and fill in your values:
+
+```bash
+cp server/.env.example server/.env
+```
+
+Then open `server/.env` and set at minimum:
+
+| Variable | Description | How to generate |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | See example in `.env.example` |
+| `JWT_SECRET` | JWT signing secret | `openssl rand -base64 64` |
+| `SESSION_TOKEN_SECRET` | Session HMAC key | `openssl rand -hex 32` |
+
+---
 
 ## 🛠️ Installation
 
@@ -219,10 +255,18 @@ Maintainer/
 
 ### Server Environment Variables
 
-Create a `.env` file in `server/`:
+Copy `server/.env.example` to `server/.env` and fill in your values:
 
 ```env
-DATABASE_URL="file:./dev.db"
+# PostgreSQL connection string
+DATABASE_URL="postgresql://maintainer:your-password@localhost:5432/maintainer?schema=public&connection_limit=20"
+
+# Generate with: openssl rand -base64 64
+JWT_SECRET=
+
+# Generate with: openssl rand -hex 32
+SESSION_TOKEN_SECRET=
+
 NODE_ENV=production
 PORT=3000
 ```

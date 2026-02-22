@@ -20,7 +20,7 @@ Maintainer/
 │   ├── server.js                # Custom Server (WebSocket)
 │   │
 │   ├── prisma/
-│   │   └── schema.prisma        # Database Schema (SQLite)
+│   │   └── schema.prisma        # Database Schema (PostgreSQL)
 │   │
 │   └── src/
 │       ├── app/
@@ -173,7 +173,7 @@ Maintainer/
 
 ### Server
 - [ ] Set `NODE_ENV=production`
-- [ ] Configure `DATABASE_URL` (SQLite path)
+- [ ] Configure `DATABASE_URL` (PostgreSQL connection string)
 - [ ] Set up reverse proxy (nginx/Apache)
 - [ ] Enable HTTPS
 - [ ] Configure firewall (Port 3000 oder 80/443)
