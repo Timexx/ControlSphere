@@ -262,7 +262,7 @@ Browser  ──WebSocket──►  Next.js Server (Node.js)  ◄──WebSocket�
 - [x] Package security scanner
 - [x] Port monitoring
 - [x] Audit logging
-- [ ] Multi-user support with roles
+- [x] Multi-user support with roles
 - [ ] Alert system (email / Slack / webhook for threshold events)
 - [ ] File manager
 - [ ] Custom scripts library
