@@ -359,8 +359,8 @@ else
     SERVICE_USER="$(whoami)"
 fi
 
-# Get absolute paths
-SERVER_DIR="$(cd "$(dirname "$0")/server" && pwd)"
+# Get absolute paths (we're already in the server/ directory from line 249)
+SERVER_DIR="$(pwd)"
 NPM_PATH="$(which npm)"
 NODE_PATH="$(which node)"
 
