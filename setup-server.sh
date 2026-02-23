@@ -104,6 +104,10 @@ setup_postgresql_db() {
 
     run_psql "GRANT ALL PRIVILEGES ON DATABASE $db_name TO $db_user;" || true
 
+    # CREATEDB is required for 'prisma migrate dev' (shadow database).
+    # Safe to grant — the user is already the DB owner.
+    run_psql "ALTER USER $db_user CREATEDB;" || true
+
     echo -e "${GREEN}Database '$db_name' ready \u2713${NC}"
 }
 
@@ -339,7 +343,7 @@ echo -e "${GREEN}Generating Prisma client...${NC}"
 npm run prisma:generate
 
 echo -e "${GREEN}Running database migrations...${NC}"
-npm run prisma:migrate
+npx prisma migrate deploy
 
 echo ""
 echo -e "${GREEN}============================================${NC}"
