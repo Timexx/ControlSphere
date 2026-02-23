@@ -362,9 +362,9 @@ function MachineCard({
       <div className={cn(
         "relative px-6 py-4 border-b border-slate-800 flex items-start justify-between min-h-[88px]"
       )}>
-        <div className="flex-1 pr-16">
+        <div className="flex-1 pr-16 min-w-0">
           <h3 className="text-xl font-semibold text-white truncate">{machine.hostname}</h3>
-          <p className="text-sm text-slate-400">{machine.ip}</p>
+          <p className="text-sm text-slate-400 truncate">{machine.ip}</p>
           <p className="mt-2 text-xs text-slate-500 truncate">
             {osInfo.distro ? `${osInfo.distro} ${osInfo.release}` : '\u00A0'}
           </p>

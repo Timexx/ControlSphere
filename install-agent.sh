@@ -20,7 +20,7 @@ else
 fi
 
 SERVER_URL="ws://${SERVER_HOST}:${SERVER_PORT}/ws/agent"
-DOWNLOAD_URL="http://${SERVER_HOST}:${SERVER_PORT}/downloads/maintainer-agent"
+DOWNLOAD_URL="http://${SERVER_HOST}:${SERVER_PORT}/api/agent-download?os=linux&arch=amd64"
 
 echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  Maintainer Agent - Smart Install/Update${NC}"

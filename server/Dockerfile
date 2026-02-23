@@ -9,10 +9,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-cert
 # Update npm to latest for security fixes
 RUN npm install -g npm@11.10.1
 
-COPY package.json package-lock.json* ./
+COPY server/package.json server/package-lock.json* ./
 RUN npm ci
 
-# ── Stage 2: Build Next.js app & generate Prisma client ────────────────────
+# ── Stage 2: Build Agent Binaries (Go cross-compilation) ───────────────────
+FROM golang:1.21-alpine AS agent-builder
+WORKDIR /src
+
+# Copy agent source from parent directory
+# (docker-compose build context must be the repo root for this to work)
+COPY agent/go.mod agent/go.sum* ./
+RUN CGO_ENABLED=0 go mod download
+
+COPY agent/ ./
+
+# Ensure go.sum is up to date (in case source was modified)
+RUN go mod tidy
+
+# Cross-compile for all target platforms
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/maintainer-agent-linux-amd64 -ldflags="-s -w" . && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/maintainer-agent-linux-arm64 -ldflags="-s -w" . && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/maintainer-agent-windows-amd64.exe -ldflags="-s -w" . && \
+    CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o bin/maintainer-agent-windows-arm64.exe -ldflags="-s -w" . && \
+    cp bin/maintainer-agent-linux-amd64 bin/maintainer-agent
+
+# ── Stage 3: Build Next.js app & generate Prisma client ────────────────────
 FROM node:20-slim AS builder
 WORKDIR /app
 
@@ -26,12 +47,12 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY server/ .
 
 # prisma generate + next build (defined in package.json "build" script)
 RUN npm run build
 
-# ── Stage 3: Production runner ──────────────────────────────────────────────
+# ── Stage 4: Production runner ──────────────────────────────────────────────
 FROM node:20-slim AS runner
 WORKDIR /app
 
@@ -60,8 +81,13 @@ COPY --from=builder /app/server.js      ./server.js
 COPY --from=builder /app/tsconfig.json  ./tsconfig.json
 COPY --from=builder /app/next.config.js ./next.config.js
 
-COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+# Copy pre-compiled agent binaries from agent-builder stage
+COPY --from=agent-builder /src/bin/ ./public/downloads/
+
+COPY server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY server/scripts/ ./scripts/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x ./scripts/*.sh 2>/dev/null || true
 
 EXPOSE 3000
 

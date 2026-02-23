@@ -120,6 +120,9 @@ const messages = {
     loading: {
       sync: 'Node-Status wird synchronisiert...'
     },
+    shared: {
+      noData: 'Keine Daten'
+    },
     header: {
       eyebrow: 'Node Control',
       securityLink: 'Zu Security Events',
@@ -626,6 +629,7 @@ const messages = {
         fileIntegrity: {
           title: '1. File Integrity Monitoring',
           description: 'Überwacht das gesamte Dateisystem auf unerwartete Änderungen. Die Severity wird automatisch nach Pfad klassifiziert: Systemkritische Dateien (z.B. /etc/) werden als HIGH eingestuft, Anwendungsdateien als MEDIUM, und Log-/Temp-/Docker-Dateien als LOW.',
+          descriptionWindows: 'Überwacht kritische Systemdateien auf unerwartete Änderungen. Die Severity wird automatisch nach Pfad klassifiziert: Systemkritische Dateien (z.B. System32\\config) werden als HIGH eingestuft, Program Files als MEDIUM, und Temp-/Log-Dateien als LOW.',
           files: 'Überwachte Dateien:',
           filesList: [
             '/etc/passwd',
@@ -652,6 +656,7 @@ const messages = {
         authLogMonitoring: {
           title: '3. Auth Log Monitoring',
           description: 'Analysiert Authentifizierungs-Logs auf verdächtige Aktivitäten wie Brute-Force-Angriffe oder Root-Logins.',
+          descriptionWindows: 'Analysiert das Windows Security Event Log auf verdächtige Aktivitäten wie Brute-Force-Angriffe (Event ID 4625) und erfolgreiche Anmeldungen (Event ID 4624).',
           failedLogins: 'Fehlgeschlagene Logins:',
           failedAttempts: [
             { range: '3-9 Versuche', severity: 'medium' },
@@ -661,6 +666,7 @@ const messages = {
           rootLogins: 'Root-Logins:',
           rootLoginsDetail: 'Jeder erfolgreiche Root-Login wird als "medium" Event gemeldet.',
           monitoredFiles: 'Überwachte Log-Dateien:',
+          monitoredSources: 'Überwachte Eventquellen',
           logFiles: [
             '/var/log/auth.log (Debian/Ubuntu)',
             '/var/log/secure (RHEL/CentOS)'
@@ -691,14 +697,19 @@ const messages = {
         severityClassification: {
           title: '6. Severity-Klassifizierung',
           description: 'File-Integrity-Events werden automatisch nach Pfad klassifiziert, um Rauschen zu reduzieren und kritische Änderungen zu priorisieren.',
+          descriptionWindows: 'File-Integrity-Events werden automatisch nach Pfad klassifiziert, um Rauschen zu reduzieren und kritische Änderungen auf Windows-Systemen zu priorisieren.',
           high: 'HIGH — Systemkritische Pfade',
           highPaths: '/etc/, /root/.ssh/, /usr/bin/, /usr/sbin/, /sbin/, /bin/, /boot/, /lib/',
+          highPathsWindows: 'System32\\config\\, System32\\drivers\\etc\\, GroupPolicy\\, Windows\\System32\\',
           medium: 'MEDIUM — Anwendungspfade',
           mediumPaths: '/opt/, /srv/, /var/www/, /home/*/bin/ und andere Anwendungsverzeichnisse',
+          mediumPathsWindows: 'Program Files\\, Program Files (x86)\\, ProgramData\\, Users\\*\\AppData\\',
           low: 'LOW — Logs & temporäre Dateien',
           lowPaths: '*.log, /var/log/, /tmp/, /var/cache/, Docker-Overlay-Layer, PM2-Logs, Letsencrypt-Logs',
+          lowPathsWindows: '*.log, Windows\\Temp\\, Users\\*\\AppData\\Local\\Temp\\, Windows\\Logs\\',
           ignored: 'IGNORIERT — Vollständig gefiltert',
           ignoredPaths: '/var/lib/docker/containers/, /var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/',
+          ignoredPathsWindows: 'Windows\\WinSxS\\, Windows\\SoftwareDistribution\\, $Recycle.Bin\\, System Volume Information\\',
           filterNote: 'Die Standardansicht blendet LOW-Events aus. Nutze die Filter-Buttons, um bei Bedarf alle Events anzuzeigen.'
         }
       }
@@ -712,7 +723,10 @@ const messages = {
         apt: 'Mit apt aktualisieren',
         yum: 'Mit yum aktualisieren',
         dnf: 'Mit dnf aktualisieren',
-        pacman: 'Mit pacman aktualisieren'
+        pacman: 'Mit pacman aktualisieren',
+        choco: 'Mit Chocolatey aktualisieren',
+        winget: 'Mit winget aktualisieren',
+        windowsUpdate: 'Über Windows Update aktualisieren'
       }
     },
     tooltips: {
@@ -745,6 +759,7 @@ const messages = {
     quickInstall: {
       title: 'Schnell-Installation (Empfohlen)',
       description: 'Kopiere diesen Befehl und führe ihn auf deinem Linux-System aus:',
+      descriptionWindows: 'Führe diesen Befehl in einer erhöhten PowerShell-Konsole aus (Als Administrator ausführen):',
       download: 'Install-Script herunterladen',
       copyScript: 'Script kopieren',
     },
@@ -753,9 +768,17 @@ const messages = {
     notes: {
       title: 'Wichtige Hinweise:',
       root: 'Der Agent muss als root ausgeführt werden (sudo)',
+      runAsAdmin: 'PowerShell als Administrator ausführen',
+      windowsService: 'Der Agent läuft als Windows-Dienst "MaintainerAgent"',
       secret: 'Speichere den generierten Secret Key sicher',
       dashboard: 'Der Agent erscheint automatisch im Dashboard nach der Installation',
       port: 'Port 3000 muss vom VM-System erreichbar sein',
+    },
+    troubleshooting: {
+      title: 'Fehlerbehebung (Windows)',
+      description: 'Falls der Agent nicht im Dashboard erscheint, prüfe Folgendes:',
+      viewLogs: 'Agent-Logs anzeigen (letzte 50 Zeilen):',
+      checkService: 'Service-Status prüfen:',
     },
     close: 'Schließen',
   },

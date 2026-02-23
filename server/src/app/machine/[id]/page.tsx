@@ -95,6 +95,7 @@ interface Machine {
     diskUsage: number
     diskTotal: number
     diskUsed: number
+    disks?: Array<{ path: string; usage: number; total: number; used: number }> | null
     uptime: number
     timestamp: string
   }>
@@ -144,6 +145,7 @@ interface HistoricalMetric {
   diskUsage: number
   diskTotal: number
   diskUsed: number
+  disks?: Array<{ path: string; usage: number; total: number; used: number }> | null
   uptime: number
   timestamp: string
 }
@@ -153,6 +155,18 @@ interface AnalyticsMeta {
   rawCount: number
   rangeKey: RangeKey
   rangeHours: number
+}
+
+// Helper to detect Windows from osInfo JSON string
+function parseIsWindows(osInfoRaw: string | null | undefined): boolean {
+  if (!osInfoRaw) return false
+  try {
+    const parsed = typeof osInfoRaw === 'string' ? JSON.parse(osInfoRaw) : osInfoRaw
+    const distro = (parsed?.distro || parsed?.Distro || '').toLowerCase()
+    return distro.includes('windows')
+  } catch {
+    return false
+  }
 }
 
 export default function MachinePage() {
@@ -413,6 +427,12 @@ export default function MachinePage() {
       }
       const data = await res.json()
       setMachine(data.machine)
+      
+      // DEBUG: Check if disks data is present
+      if (data.machine?.metrics?.[0]) {
+        console.log('🔍 Latest metric disks:', data.machine.metrics[0].disks)
+        console.log('📊 Full metric:', data.machine.metrics[0])
+      }
       
       if (sessionRes?.ok) {
         try {
@@ -823,9 +843,17 @@ export default function MachinePage() {
                 <ArrowLeft className="h-5 w-5" />
               </button>
               <div className="h-12 w-12 rounded-lg border border-cyan-400/30 bg-[#0f161d] flex items-center justify-center">
-                <svg xmlns="http://www.w3.org/2000/svg" height="24px" viewBox="0 -960 960 960" width="24px" fill="currentColor" className="h-6 w-6 text-cyan-200">
-                  <path d="M440-183v-274L200-596v274l240 139Zm80 0 240-139v-274L520-457v274Zm-40-343 237-137-237-137-237 137 237 137ZM160-252q-19-11-29.5-29T120-321v-318q0-22 10.5-40t29.5-29l280-161q19-11 40-11t40 11l280 161q19 11 29.5 29t10.5 40v318q0 22-10.5 40T800-252L520-91q-19 11-40 11t-40-11L160-252Zm320-228Z"/>
-                </svg>
+                {parseIsWindows(machine.osInfo) ? (
+                  // Windows Logo
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" className="h-6 w-6 text-cyan-200" fill="currentColor">
+                    <path d="m0,12.402,35.687-4.8602,0.0156,34.423-35.67,0.20313zm35.67,33.529,0.0277,34.453-35.67-4.9041-0.002-29.78zm4.3261-39.025,47.318-6.906,0,41.527-47.318,0.37565zm47.329,39.349-0.0111,41.34-47.318-6.6784-0.0663-34.739z"/>
+                  </svg>
+                ) : (
+                  // Linux Logo (Simple Terminal/Console Icon)
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="h-6 w-6 text-cyan-200" fill="currentColor">
+                    <path d="M20 4H4c-1.11 0-2 .89-2 2v12c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V6c0-1.11-.89-2-2-2zm0 14H4V8h16v10zM7 10h2v2H7zm0 3h2v2H7zm3-3h8v2h-8zm0 3h8v2h-8z"/>
+                  </svg>
+                )}
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/80 font-mono">{t('header.eyebrow')}</p>
@@ -1014,13 +1042,48 @@ export default function MachinePage() {
                     color="from-purple-400 to-fuchsia-600"
                     subtitle={`${formatBytes(latestMetric.ramUsed * 1024 * 1024 * 1024)} / ${formatBytes(latestMetric.ramTotal * 1024 * 1024 * 1024)}`}
                   />
-                  <MetricBar
-                    icon={<HardDrive className="h-5 w-5 text-amber-300" />}
-                    label={t('metrics.disk')}
-                    value={latestMetric.diskUsage}
-                    color="from-amber-400 to-orange-600"
-                    subtitle={`${formatBytes(latestMetric.diskUsed * 1024 * 1024 * 1024)} / ${formatBytes(latestMetric.diskTotal * 1024 * 1024 * 1024)}`}
-                  />
+                  
+                  {/* Disk metrics - show aggregate or per-disk */}
+                  {latestMetric.disks && latestMetric.disks.length > 0 ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <HardDrive className="h-5 w-5 text-amber-300" />
+                          <span className="text-sm font-medium text-white">{t('metrics.disk')}</span>
+                        </div>
+                        <span className="text-xs text-slate-400">
+                          {latestMetric.disks.length} {latestMetric.disks.length === 1 ? 'drive' : 'drives'}
+                        </span>
+                      </div>
+                      {latestMetric.disks.map((disk, idx) => (
+                        <div key={idx} className="pl-7">
+                          <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-xs text-slate-400 font-mono">{disk.path}</span>
+                            <span className="text-xs text-slate-300">
+                              {formatBytes(disk.used * 1024 * 1024 * 1024)} / {formatBytes(disk.total * 1024 * 1024 * 1024)}
+                            </span>
+                          </div>
+                          <div className="w-full h-2 rounded-full bg-slate-900 overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-amber-400 to-orange-600 transition-all duration-500"
+                              style={{ width: `${Math.min(disk.usage, 100)}%` }}
+                            />
+                          </div>
+                          <div className="flex justify-between mt-0.5">
+                            <span className="text-xs text-slate-500">{disk.usage.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <MetricBar
+                      icon={<HardDrive className="h-5 w-5 text-amber-300" />}
+                      label={t('metrics.disk')}
+                      value={latestMetric.diskUsage}
+                      color="from-amber-400 to-orange-600"
+                      subtitle={`${formatBytes(latestMetric.diskUsed * 1024 * 1024 * 1024)} / ${formatBytes(latestMetric.diskTotal * 1024 * 1024 * 1024)}`}
+                    />
+                  )}
                   <div className="flex items-center justify-between pt-4 border-t border-slate-800">
                     <div className="flex items-center space-x-2 text-slate-300">
                       <Clock className="h-5 w-5 text-slate-400" />
@@ -1050,13 +1113,15 @@ export default function MachinePage() {
                       icon={<TerminalIcon className="h-5 w-5" />}
                       label={t('actions.openTerminal')}
                     />
-                    <ActionButton
-                      onClick={() => handleCommand('apt update && apt upgrade -y')}
-                      disabled={!isOnline || !!executing || rebooting}
-                      tone="success"
-                      icon={<Download className="h-5 w-5" />}
-                      label={t('actions.systemUpdate')}
-                    />
+                    {!parseIsWindows(machine.osInfo) && (
+                      <ActionButton
+                        onClick={() => handleCommand('apt update && apt upgrade -y')}
+                        disabled={!isOnline || !!executing || rebooting}
+                        tone="success"
+                        icon={<Download className="h-5 w-5" />}
+                        label={t('actions.systemUpdate')}
+                      />
+                    )}
                     <ActionButton
                       onClick={updateAgent}
                       disabled={!isOnline || !!executing || rebooting}

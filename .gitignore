@@ -15,7 +15,9 @@ node_modules/
 # Agent
 /agent/maintainer-agent
 /agent/maintainer-agent-*
+/agent/bin/
 /agent/config.json
+/server/public/downloads/maintainer-agent*
 
 # IDE
 .vscode/

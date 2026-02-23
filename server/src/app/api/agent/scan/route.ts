@@ -5,10 +5,12 @@ import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
 import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
 import { scanPackages } from '@/services/vulnerability-scanner'
+import { triggerCveMirrorOnce } from '@/services/cve-mirror'
 import { clearScanProgress } from '@/lib/scan-progress-store'
 import { classifyIntegritySeverity } from '@/lib/integrity-severity'
 
 const INTEGRITY_IGNORE_PATTERNS = [
+  // Linux
   /^\/var\/log\/journal\/.*/i,
   /^\/var\/lib\/docker\/containers\/.*/i,
   /^\/var\/lib\/docker\/overlay2\/.*/i,
@@ -16,7 +18,15 @@ const INTEGRITY_IGNORE_PATTERNS = [
   /^\/var\/lib\/apt\/.*/i,
   /^\/var\/lib\/dpkg\/.*/i,
   /^\/var\/tmp\/.*/i,
-  /^\/root\/\.pm2\/logs\/.*/i
+  /^\/root\/\.pm2\/logs\/.*/i,
+  // Windows
+  /^[A-Z]:\\Windows\\WinSxS\\.*/i,
+  /^[A-Z]:\\Windows\\SoftwareDistribution\\.*/i,
+  /^[A-Z]:\\Windows\\Temp\\.*/i,
+  /^[A-Z]:\\\$Recycle\.Bin\\.*/i,
+  /^[A-Z]:\\System Volume Information\\.*/i,
+  /^[A-Z]:\\Windows\\Prefetch\\.*/i,
+  /^[A-Z]:\\Windows\\Logs\\.*/i
 ]
 const INTEGRITY_COOLDOWN_MS = 15 * 60 * 1000 // 15 minutes
 
@@ -421,6 +431,18 @@ export async function POST(request: NextRequest) {
 
     // Refresh in-memory cache so dashboard cards show current event counts
     await refreshSecurityCacheForMachine(prisma, machineId)
+
+    // If we have packages but no CVEs in the database, trigger a CVE mirror sync
+    // This solves the chicken-and-egg problem where the mirror runs before any packages exist
+    if (packages.length > 0) {
+      const cveCount = await prisma.cve.count()
+      if (cveCount === 0) {
+        console.log(`[scan] First scan with ${packages.length} packages but 0 CVEs — triggering CVE mirror sync`)
+        triggerCveMirrorOnce().catch((err) =>
+          console.error('Background CVE mirror sync failed:', err)
+        )
+      }
+    }
 
     // Emit scan completed event for real-time update
     realtimeEvents.emitScanCompleted(machineId, scan.id, actualSummary)

@@ -86,9 +86,10 @@ model Metric {
   ramUsage    Float    // Percentage
   ramTotal    Float    // GB
   ramUsed     Float    // GB
-  diskUsage   Float    // Percentage
-  diskTotal   Float    // GB
-  diskUsed    Float    // GB
+  diskUsage   Float    // Percentage (aggregate or primary disk for backward compat)
+  diskTotal   Float    // GB (aggregate or primary disk)
+  diskUsed    Float    // GB (aggregate or primary disk)
+  disks       Json?    // Array of { path: string, usage: number, total: number, used: number }
   uptime      Int      // Seconds
   
   timestamp   DateTime @default(now())

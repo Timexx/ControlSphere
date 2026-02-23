@@ -42,7 +42,7 @@ export async function GET(
   try {
     const machine = await prisma.machine.findUnique({
       where: { id: params.id },
-      select: { id: true, hostname: true }
+      select: { id: true, hostname: true, osInfo: true }
     })
 
     if (!machine) {

@@ -88,34 +88,72 @@ function parseScanSummary(summary: any) {
   return summary
 }
 
-// Handbook data - static content
-const HANDBOOK_DATA = {
-  fileIntegrity: [
-    '/etc/passwd',
-    '/etc/shadow',
-    '/etc/sudoers',
-    '/etc/ssh/sshd_config',
-    '/etc/hosts',
-    '/etc/crontab',
-    '/root/.ssh/authorized_keys',
-    '/etc/pam.d/sshd',
-    '/etc/security/access.conf'
-  ],
-  sshConfig: [
-    { key: 'PermitRootLogin', value: 'expected: no' },
-    { key: 'PasswordAuthentication', value: 'expected: no' },
-    { key: 'PermitEmptyPasswords', value: 'expected: no' }
-  ],
-  failedAttempts: [
-    { range: '3-9 attempts', severity: 'medium' },
-    { range: '10-49 attempts', severity: 'high' },
-    { range: '50+ attempts', severity: 'critical' }
-  ],
-  logFiles: [
-    '/var/log/auth.log (Debian/Ubuntu)',
-    '/var/log/secure (RHEL/CentOS)'
-  ],
-  cveCoverageBullets: ['serverMirror', 'agentPaths', 'serverMatching', 'operatorChecks']
+// Handbook data - OS-aware content
+function getHandbookData(isWindows: boolean) {
+  if (isWindows) {
+    return {
+      fileIntegrity: [
+        'C:\\Windows\\System32\\config\\SAM',
+        'C:\\Windows\\System32\\config\\SECURITY',
+        'C:\\Windows\\System32\\config\\SYSTEM',
+        'C:\\Windows\\System32\\config\\SOFTWARE',
+        'C:\\Windows\\System32\\drivers\\etc\\hosts',
+        'C:\\Windows\\System32\\drivers\\etc\\lmhosts.sam',
+        'C:\\Windows\\System32\\GroupPolicy\\Machine\\Registry.pol'
+      ],
+      configDrift: [] as { key: string; value: string }[], // not yet implemented for Windows
+      failedAttempts: [
+        { range: '3-9 attempts', severity: 'medium' },
+        { range: '10-49 attempts', severity: 'high' },
+        { range: '50+ attempts', severity: 'critical' }
+      ],
+      logFiles: [
+        'Windows Security Event Log (Event ID 4625 — Failed Logon)',
+        'Windows Security Event Log (Event ID 4624 — Successful Logon)'
+      ],
+      cveCoverageBullets: ['serverMirror', 'agentPaths', 'serverMatching', 'operatorChecks'] as const
+    }
+  }
+  return {
+    fileIntegrity: [
+      '/etc/passwd',
+      '/etc/shadow',
+      '/etc/sudoers',
+      '/etc/ssh/sshd_config',
+      '/etc/hosts',
+      '/etc/crontab',
+      '/root/.ssh/authorized_keys',
+      '/etc/pam.d/sshd',
+      '/etc/security/access.conf'
+    ],
+    configDrift: [
+      { key: 'PermitRootLogin', value: 'expected: no' },
+      { key: 'PasswordAuthentication', value: 'expected: no' },
+      { key: 'PermitEmptyPasswords', value: 'expected: no' }
+    ],
+    failedAttempts: [
+      { range: '3-9 attempts', severity: 'medium' },
+      { range: '10-49 attempts', severity: 'high' },
+      { range: '50+ attempts', severity: 'critical' }
+    ],
+    logFiles: [
+      '/var/log/auth.log (Debian/Ubuntu)',
+      '/var/log/secure (RHEL/CentOS)'
+    ],
+    cveCoverageBullets: ['serverMirror', 'agentPaths', 'serverMatching', 'operatorChecks'] as const
+  }
+}
+
+// Helper to detect Windows from osInfo JSON string
+function parseIsWindows(osInfoRaw: string | null | undefined): boolean {
+  if (!osInfoRaw) return false
+  try {
+    const parsed = typeof osInfoRaw === 'string' ? JSON.parse(osInfoRaw) : osInfoRaw
+    const distro = (parsed?.distro || parsed?.Distro || '').toLowerCase()
+    return distro.includes('windows')
+  } catch {
+    return false
+  }
 }
 
 export default function VMSecurityDetailPage() {
@@ -136,7 +174,7 @@ export default function VMSecurityDetailPage() {
   const [vulnerabilitiesExpanded, setVulnerabilitiesExpanded] = useState(true)
   const [scanProgress, setScanProgress] = useState<{ progress: number; phase: string; etaSeconds: number | null; startedAt: string | null } | null>(null)
   const [scanReportExpanded, setScanReportExpanded] = useState(false)
-  const [meta, setMeta] = useState<{ openEvents: number; lastScan?: string | null; hostname?: string; lastScanSummary?: any }>({ openEvents: 0 })
+  const [meta, setMeta] = useState<{ openEvents: number; lastScan?: string | null; hostname?: string; lastScanSummary?: any; osInfo?: string | null }>({ openEvents: 0 })
   const [securityEventsExpanded, setSecurityEventsExpanded] = useState(false)
   const [auditLogsExpanded, setAuditLogsExpanded] = useState(false)
   const [packagesExpanded, setPackagesExpanded] = useState(false)
@@ -149,6 +187,10 @@ export default function VMSecurityDetailPage() {
   const [, forceUpdate] = useState(0) // For timestamp refresh
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; tone: 'success' | 'error' | 'info' }>>([])
   const [etaCountdown, setEtaCountdown] = useState<number | null>(null)
+
+  // Derived: detect OS and get OS-appropriate handbook content
+  const isWindows = useMemo(() => parseIsWindows(meta.osInfo), [meta.osInfo])
+  const handbookData = useMemo(() => getHandbookData(isWindows), [isWindows])
 
   // Auto-refresh timestamp display every 30 seconds
   useEffect(() => {
@@ -240,7 +282,8 @@ export default function VMSecurityDetailPage() {
           openEvents: securityData.openEvents || 0,
           lastScan: securityData.lastScan?.createdAt || null,
           lastScanSummary: parseScanSummary(securityData.lastScan?.summary),
-          hostname: securityData.machine?.hostname
+          hostname: securityData.machine?.hostname,
+          osInfo: securityData.machine?.osInfo || null
         })
         if (securityData.scanProgress) {
           setScanProgress({
@@ -1189,39 +1232,41 @@ export default function VMSecurityDetailPage() {
                   {t('handbook.sections.fileIntegrity.title')}
                 </h3>
                 <p className="text-sm text-slate-300">
-                  {t('handbook.sections.fileIntegrity.description')}
+                  {isWindows ? t('handbook.sections.fileIntegrity.descriptionWindows') : t('handbook.sections.fileIntegrity.description')}
                 </p>
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                   <p className="text-xs text-slate-400 mb-2 font-medium">{t('handbook.sections.fileIntegrity.files')}:</p>
-                  <div className="grid grid-cols-2 gap-1 text-xs font-mono text-slate-300">
-                    {HANDBOOK_DATA.fileIntegrity.map((file: string) => (
+                  <div className={cn('gap-1 text-xs font-mono text-slate-300', isWindows ? 'space-y-1' : 'grid grid-cols-2')}>
+                    {handbookData.fileIntegrity.map((file: string) => (
                       <span key={file}>{file}</span>
                     ))}
                   </div>
                 </div>
               </div>
 
-              {/* Config Drift Detection */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold text-amber-300 uppercase tracking-wider flex items-center gap-2">
-                  <ListChecks className="h-4 w-4" />
-                  {t('handbook.sections.configDrift.title')}
-                </h3>
-                <p className="text-sm text-slate-300">
-                  {t('handbook.sections.configDrift.description')}
-                </p>
-                <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
-                  <p className="text-xs text-slate-400 mb-2 font-medium">{t('handbook.sections.configDrift.sshConfig')}:</p>
-                  <div className="space-y-1 text-xs">
-                    {HANDBOOK_DATA.sshConfig.map((exp: any) => (
-                      <div key={exp.key} className="flex justify-between">
-                        <span className="font-mono text-slate-300">{exp.key}</span>
-                        <span className="text-emerald-400">{exp.value}</span>
-                      </div>
-                    ))}
+              {/* Config Drift Detection — only shown for Linux (agent stub returns empty on Windows) */}
+              {!isWindows && (
+                <div className="space-y-3">
+                  <h3 className="text-sm font-semibold text-amber-300 uppercase tracking-wider flex items-center gap-2">
+                    <ListChecks className="h-4 w-4" />
+                    {t('handbook.sections.configDrift.title')}
+                  </h3>
+                  <p className="text-sm text-slate-300">
+                    {t('handbook.sections.configDrift.description')}
+                  </p>
+                  <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
+                    <p className="text-xs text-slate-400 mb-2 font-medium">{t('handbook.sections.configDrift.sshConfig')}:</p>
+                    <div className="space-y-1 text-xs">
+                      {handbookData.configDrift.map((exp: any) => (
+                        <div key={exp.key} className="flex justify-between">
+                          <span className="font-mono text-slate-300">{exp.key}</span>
+                          <span className="text-emerald-400">{exp.value}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
 
               {/* Auth Log Monitoring */}
               <div className="space-y-3">
@@ -1230,13 +1275,13 @@ export default function VMSecurityDetailPage() {
                   {t('handbook.sections.authLogMonitoring.title')}
                 </h3>
                 <p className="text-sm text-slate-300">
-                  {t('handbook.sections.authLogMonitoring.description')}
+                  {isWindows ? t('handbook.sections.authLogMonitoring.descriptionWindows') : t('handbook.sections.authLogMonitoring.description')}
                 </p>
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700 space-y-2">
                   <div>
                     <p className="text-xs text-slate-400 font-medium">{t('handbook.sections.authLogMonitoring.failedLogins')}:</p>
                     <div className="text-xs text-slate-300 mt-1 space-y-0.5">
-                      {HANDBOOK_DATA.failedAttempts.map((attempt: any) => (
+                      {handbookData.failedAttempts.map((attempt: any) => (
                         <div key={attempt.range}>• {attempt.range} → <span className={
                           attempt.severity === 'critical' ? 'text-rose-400' :
                           attempt.severity === 'high' ? 'text-orange-400' :
@@ -1245,15 +1290,19 @@ export default function VMSecurityDetailPage() {
                       ))}
                     </div>
                   </div>
-                  <div>
-                    <p className="text-xs text-slate-400 font-medium">{t('handbook.sections.authLogMonitoring.rootLogins')}:</p>
-                    <p className="text-xs text-slate-300">{t('handbook.sections.authLogMonitoring.rootLoginsDetail')}</p>
-                  </div>
+                  {!isWindows && (
+                    <div>
+                      <p className="text-xs text-slate-400 font-medium">{t('handbook.sections.authLogMonitoring.rootLogins')}:</p>
+                      <p className="text-xs text-slate-300">{t('handbook.sections.authLogMonitoring.rootLoginsDetail')}</p>
+                    </div>
+                  )}
                 </div>
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
-                  <p className="text-xs text-slate-400 mb-2 font-medium">{t('handbook.sections.authLogMonitoring.monitoredFiles')}:</p>
+                  <p className="text-xs text-slate-400 mb-2 font-medium">
+                    {isWindows ? t('handbook.sections.authLogMonitoring.monitoredSources') : t('handbook.sections.authLogMonitoring.monitoredFiles')}:
+                  </p>
                   <div className="text-xs font-mono text-slate-300 space-y-0.5">
-                    {HANDBOOK_DATA.logFiles.map((logfile: string) => (
+                    {handbookData.logFiles.map((logfile: string) => (
                       <div key={logfile}>{logfile}</div>
                     ))}
                   </div>
@@ -1307,7 +1356,7 @@ export default function VMSecurityDetailPage() {
                 </p>
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700">
                   <ul className="text-xs text-slate-200 space-y-1">
-                    {HANDBOOK_DATA.cveCoverageBullets.map((key) => (
+                    {handbookData.cveCoverageBullets.map((key) => (
                       <li key={key}>• {t(`handbook.sections.cveCoverage.bullets.${key}`)}</li>
                     ))}
                   </ul>
@@ -1321,24 +1370,24 @@ export default function VMSecurityDetailPage() {
                   {t('handbook.sections.severityClassification.title')}
                 </h3>
                 <p className="text-sm text-slate-300">
-                  {t('handbook.sections.severityClassification.description')}
+                  {isWindows ? t('handbook.sections.severityClassification.descriptionWindows') : t('handbook.sections.severityClassification.description')}
                 </p>
                 <div className="bg-slate-800/50 rounded-lg p-3 border border-slate-700 space-y-3">
                   <div>
                     <p className="text-xs font-semibold text-orange-300">{t('handbook.sections.severityClassification.high')}</p>
-                    <p className="text-xs font-mono text-slate-400 mt-0.5">{t('handbook.sections.severityClassification.highPaths')}</p>
+                    <p className="text-xs font-mono text-slate-400 mt-0.5">{isWindows ? t('handbook.sections.severityClassification.highPathsWindows') : t('handbook.sections.severityClassification.highPaths')}</p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold text-amber-300">{t('handbook.sections.severityClassification.medium')}</p>
-                    <p className="text-xs font-mono text-slate-400 mt-0.5">{t('handbook.sections.severityClassification.mediumPaths')}</p>
+                    <p className="text-xs font-mono text-slate-400 mt-0.5">{isWindows ? t('handbook.sections.severityClassification.mediumPathsWindows') : t('handbook.sections.severityClassification.mediumPaths')}</p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold text-slate-400">{t('handbook.sections.severityClassification.low')}</p>
-                    <p className="text-xs font-mono text-slate-500 mt-0.5">{t('handbook.sections.severityClassification.lowPaths')}</p>
+                    <p className="text-xs font-mono text-slate-500 mt-0.5">{isWindows ? t('handbook.sections.severityClassification.lowPathsWindows') : t('handbook.sections.severityClassification.lowPaths')}</p>
                   </div>
                   <div>
                     <p className="text-xs font-semibold text-slate-500">{t('handbook.sections.severityClassification.ignored')}</p>
-                    <p className="text-xs font-mono text-slate-600 mt-0.5">{t('handbook.sections.severityClassification.ignoredPaths')}</p>
+                    <p className="text-xs font-mono text-slate-600 mt-0.5">{isWindows ? t('handbook.sections.severityClassification.ignoredPathsWindows') : t('handbook.sections.severityClassification.ignoredPaths')}</p>
                   </div>
                 </div>
                 <p className="text-xs text-slate-400 italic">
@@ -1532,6 +1581,15 @@ function PackageActionHint({ pkg, t, locale }: { pkg: PackageRow; t?: any; local
   } else if (manager === 'pacman') {
     commandLabel = t?.('packageActions.updateManagers.pacman') || (locale === 'de' ? 'Mit pacman aktualisieren' : 'Update with pacman')
     command = `sudo pacman -Syu ${pkg.name}`
+  } else if (manager === 'choco' || manager === 'chocolatey') {
+    commandLabel = t?.('packageActions.updateManagers.choco') || (locale === 'de' ? 'Mit Chocolatey aktualisieren' : 'Update with Chocolatey')
+    command = `choco upgrade ${pkg.name} -y`
+  } else if (manager === 'winget') {
+    commandLabel = t?.('packageActions.updateManagers.winget') || (locale === 'de' ? 'Mit winget aktualisieren' : 'Update with winget')
+    command = `winget upgrade ${pkg.name}`
+  } else if (manager === 'wmic' || manager === 'windows_update') {
+    commandLabel = t?.('packageActions.updateManagers.windowsUpdate') || (locale === 'de' ? 'Über Windows Update aktualisieren' : 'Update via Windows Update')
+    command = ''
   }
 
   return (

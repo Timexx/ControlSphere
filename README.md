@@ -2,7 +2,7 @@
 
 **Your entire infrastructure. One dashboard. Zero complexity.**
 
-ControlSphere gives you real-time visibility and full control over all your Linux systems — from a single, open-source web interface. Monitor live metrics, run terminal sessions, scan for CVEs, and manage packages across dozens of servers simultaneously. No SaaS subscriptions. No vendor lock-in. Runs entirely on your own hardware.
+ControlSphere gives you real-time visibility and full control over all your **Linux and Windows systems** — from a single, open-source web interface. Monitor live metrics, run terminal sessions, scan for CVEs, and manage packages across dozens of servers simultaneously. No SaaS subscriptions. No vendor lock-in. Runs entirely on your own hardware.
 
 Born from the need to manage servers without the cost of large operators, and made fully available under the Apache 2.0 licence so every company and organisation can deploy, adapt, and benefit freely.
 
@@ -103,7 +103,7 @@ docker compose -f deploy/docker-compose.small.yml up -d
 
 ---
 
-### 🖥️ Option B — Native install (Debian/Ubuntu, RHEL, macOS, Alpine)
+### 🖥️ Option B — Native install (Linux: Debian/Ubuntu, RHEL, Alpine · Server only)
 
 One script — fully automated setup including systemd service.
 
@@ -137,18 +137,24 @@ sudo journalctl -u controlsphere -f    # view logs
 
 ### 🤖 Adding systems (agents)
 
-Once the server is running, open the dashboard and click **"+ Agent"** in the top bar. You'll see a ready-to-run install command — copy it and paste it into any Linux system you want to monitor:
+Once the server is running, open the dashboard and click **"+ Agent"** in the top bar. You'll see a ready-to-run install command — copy it and paste it into any Linux or Windows system you want to monitor:
 
+**Linux:**
 ```bash
 curl -sSL https://your-server/install-agent.sh | sudo bash
 ```
 
-The agent installs itself as a systemd service and the system appears in your dashboard automatically. Nothing else to configure.
+**Windows (PowerShell as Administrator):**
+```powershell
+iwr https://your-server/install-agent.ps1 | iex
+```
+
+The agent installs itself as a system service and the system appears in your dashboard automatically. Nothing else to configure.
 
 **What the agent installer does:**
 - Downloads the compiled binary for your architecture (amd64 / arm64)
-- Writes `/etc/maintainer-agent/config.json`
-- Registers and starts the `maintainer-agent` systemd service
+- Writes config file (`/etc/maintainer-agent/config.json` on Linux, `C:\ProgramData\maintainer-agent\config.json` on Windows)
+- Registers and starts the system service (systemd on Linux, Windows Service on Windows)
 - Connects to your server — and reconnects automatically after every reboot
 
 ---
@@ -159,6 +165,7 @@ The agent installs itself as a systemd service and the system appears in your da
 - Real-time CPU, RAM, disk, and uptime metrics across all systems
 - Live status indicators (online / offline / error)
 - Historical metric charts
+- **Multi-platform support: Linux and Windows**
 
 **Fleet Management**
 - Bulk operations: update all systems, run commands on multiple servers at once
@@ -169,13 +176,16 @@ The agent installs itself as a systemd service and the system appears in your da
 - Web-based interactive terminal with PTY support (SSH-like, directly in the browser)
 - Copy & paste, dynamic resizing, coloured output
 - Encrypted connection with fingerprint verification and full audit logging
+- **Works on both Linux (bash/zsh) and Windows (PowerShell/cmd)**
 
 **Security & Compliance**
 - Automatic CVE database download — all packages matched against known vulnerabilities
+- **Windows package scanning: Chocolatey, winget, and NuGet ecosystem**
+- **Linux package scanning: apt, yum, dnf, apk, pacman, and more**
 - CSV export for audit reports and compliance documentation
 - Port scanning — monitors all open ports across your fleet
 - Package security scanner — highlights outdated packages that need updates
-- Security event dashboard
+- Security event dashboard with OS-specific monitoring (auth.log on Linux, Event Log on Windows)
 
 **System & Access**
 - JWT-based authentication

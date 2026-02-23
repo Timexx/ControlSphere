@@ -20,6 +20,7 @@ export interface CachedMetric {
   diskUsage: number
   diskTotal: number
   diskUsed: number
+  disks?: Array<{ path: string; usage: number; total: number; used: number }> | null
   uptime: number
 }
 
@@ -86,11 +87,12 @@ class StateCache {
         diskUsage: number
         diskTotal: number
         diskUsed: number
+        disks: any
         uptime: number
       }>>`
         SELECT DISTINCT ON ("machineId")
           "machineId", "cpuUsage", "ramUsage", "ramTotal", "ramUsed",
-          "diskUsage", "diskTotal", "diskUsed", "uptime"
+          "diskUsage", "diskTotal", "diskUsed", "disks", "uptime"
         FROM "Metric"
         ORDER BY "machineId", "timestamp" DESC
       `,
@@ -114,6 +116,7 @@ class StateCache {
         diskUsage: m.diskUsage,
         diskTotal: m.diskTotal,
         diskUsed: m.diskUsed,
+        disks: m.disks,
         uptime: m.uptime,
       })
     }

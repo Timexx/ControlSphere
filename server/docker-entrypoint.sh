@@ -44,6 +44,11 @@ if [ -z "$DATABASE_URL" ]; then
   echo "[secrets] DATABASE_URL built from auto-generated credentials (pool=${_pool})."
 fi
 
+# -- Build agent binaries if missing (for native deployments) ------------
+if [ -f "/app/scripts/build-agents-if-needed.sh" ]; then
+  sh /app/scripts/build-agents-if-needed.sh
+fi
+
 # -- Run Prisma migrations ------------------------------------------------
 echo "Running Prisma migrations..."
 npx prisma migrate deploy

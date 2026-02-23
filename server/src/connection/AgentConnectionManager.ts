@@ -443,6 +443,7 @@ export class AgentConnectionManager {
             diskUsage: data.metrics.diskUsage || 0,
             diskTotal: data.metrics.diskTotal || 0,
             diskUsed: data.metrics.diskUsed || 0,
+            disks: data.metrics.disks || null, // Store per-disk array
             uptime: data.metrics.uptime || 0
           }
         })
@@ -454,6 +455,7 @@ export class AgentConnectionManager {
           diskUsage: data.metrics.diskUsage || 0,
           diskTotal: data.metrics.diskTotal || 0,
           diskUsed: data.metrics.diskUsed || 0,
+          disks: data.metrics.disks || null,
           uptime: data.metrics.uptime || 0
         })
         state.metricsAt = now
@@ -668,6 +670,7 @@ export class AgentConnectionManager {
           diskUsage: metrics.diskUsage || 0,
           diskTotal: metrics.diskTotal || 0,
           diskUsed: metrics.diskUsed || 0,
+          disks: metrics.disks || null, // Store per-disk array
           uptime: metrics.uptime || 0
         }
       })

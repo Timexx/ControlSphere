@@ -1,26 +1,27 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { X, Download, Copy, Check, Terminal } from 'lucide-react'
+import { X, Download, Copy, Check, Terminal, Monitor } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 
 interface AddAgentModalProps {
   onClose: () => void
 }
 
+type PlatformTab = 'linux' | 'windows'
+
 export default function AddAgentModal({ onClose }: AddAgentModalProps) {
   const t = useTranslations('addAgentModal')
   const [copied, setCopied] = useState(false)
   const [serverUrl, setServerUrl] = useState('localhost:3000')
   const [loading, setLoading] = useState(true)
+  const [platform, setPlatform] = useState<PlatformTab>('linux')
 
   useEffect(() => {
-    // Lade Server-Info automatisch
     const loadServerInfo = async () => {
       try {
         const res = await fetch('/api/server-info')
         const data = await res.json()
-        // Entferne http:// und verwende nur host:port
         const url = data.url.replace('http://', '').replace('https://', '')
         setServerUrl(url)
       } catch (error) {
@@ -30,11 +31,11 @@ export default function AddAgentModal({ onClose }: AddAgentModalProps) {
         setLoading(false)
       }
     }
-
     loadServerInfo()
   }, [])
 
-  const installScript = `#!/bin/bash
+  // ─── Linux install script ───
+  const linuxInstallScript = `#!/bin/bash
 set -e
 
 # Colors
@@ -90,7 +91,6 @@ else
   exit 1
 fi
 
-# Replace with your actual download URL
 wget -O /tmp/maintainer-agent "http://${serverUrl}/downloads/\${BINARY}" || {
   echo -e "\${RED}Failed to download agent. Please download manually.\${NC}"
   echo "Place binary at: /usr/local/bin/maintainer-agent"
@@ -117,7 +117,6 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# Start service
 systemctl daemon-reload
 systemctl enable maintainer-agent
 systemctl start maintainer-agent
@@ -134,77 +133,85 @@ echo -e "View logs: \${YELLOW}journalctl -u maintainer-agent -f\${NC}"
 echo ""
 `
 
-  const manualSteps = `# Manual Installation Steps
+  // ─── Windows install script (PowerShell) ───
+  const windowsInstallScript = `#Requires -RunAsAdministrator
+# Maintainer Agent — Windows Installer
+$ErrorActionPreference = "Stop"
 
-## 1. Download Agent Binary
-Download the appropriate binary for your system:
-- Linux AMD64: maintainer-agent-linux-amd64
-- Linux ARM64: maintainer-agent-linux-arm64
+Write-Host "============================================" -ForegroundColor Green
+Write-Host "  Maintainer Agent Installation (Windows)"   -ForegroundColor Green
+Write-Host "============================================" -ForegroundColor Green
+Write-Host ""
 
-## 2. Install Binary
-\`\`\`bash
-sudo mv maintainer-agent-* /usr/local/bin/maintainer-agent
-sudo chmod +x /usr/local/bin/maintainer-agent
-\`\`\`
-
-## 3. Create Configuration
-\`\`\`bash
-sudo mkdir -p /etc/maintainer-agent
+$ServerUrl  = "ws://${serverUrl}/ws/agent"
+$InstallDir = "$env:ProgramData\\maintainer-agent"
+$BinPath    = "$InstallDir\\maintainer-agent.exe"
+$ConfigPath = "$InstallDir\\config.json"
 
 # Generate secret key
-SECRET_KEY=$(openssl rand -hex 32)
+$bytes = New-Object byte[] 32
+[System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+$SecretKey = ($bytes | ForEach-Object { $_.ToString("x2") }) -join ""
 
-# Create config
-sudo tee /etc/maintainer-agent/config.json > /dev/null <<EOF
-{
-  "server_url": "ws://${serverUrl}/ws/agent",
-  "secret_key": "$SECRET_KEY"
-}
-EOF
+Write-Host "Generated Secret Key:" -ForegroundColor Yellow
+Write-Host $SecretKey -ForegroundColor Green
+Write-Host ""
+Write-Host "IMPORTANT: Save this key!" -ForegroundColor Yellow
+Write-Host ""
 
-sudo chmod 600 /etc/maintainer-agent/config.json
-\`\`\`
+# Create install directory
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-## 4. Create Systemd Service
-\`\`\`bash
-sudo tee /etc/systemd/system/maintainer-agent.service > /dev/null <<EOF
-[Unit]
-Description=Maintainer Agent
-After=network.target
+# Write config
+$configJson = @{
+    server_url = $ServerUrl
+    secret_key = $SecretKey
+} | ConvertTo-Json
+# Write WITHOUT BOM — Go's JSON parser cannot handle UTF-8 BOM
+[System.IO.File]::WriteAllText($ConfigPath, $configJson)
 
-[Service]
-Type=simple
-User=root
-ExecStart=/usr/local/bin/maintainer-agent -config /etc/maintainer-agent/config.json
-Restart=always
-RestartSec=5
+# Restrict config permissions (use SIDs for locale independence)
+$acl = Get-Acl $ConfigPath
+$acl.SetAccessRuleProtection($true, $false)
+$sidSystem = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-18")
+$sidAdmins = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sidSystem,"FullControl","Allow")))
+$acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sidAdmins,"FullControl","Allow")))
+Set-Acl -Path $ConfigPath -AclObject $acl
 
-[Install]
-WantedBy=multi-user.target
-EOF
-\`\`\`
+# Download agent binary
+Write-Host "Downloading agent binary..." -ForegroundColor Green
+$arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "amd64" }
+$downloadUrl = "http://${serverUrl}/api/agent-download?os=windows&arch=$arch"
+Invoke-WebRequest -Uri $downloadUrl -OutFile $BinPath -UseBasicParsing
 
-## 5. Start Service
-\`\`\`bash
-sudo systemctl daemon-reload
-sudo systemctl enable maintainer-agent
-sudo systemctl start maintainer-agent
-sudo systemctl status maintainer-agent
-\`\`\`
+# Install and start Windows Service
+Write-Host "Installing Windows Service..." -ForegroundColor Green
+& $BinPath -install -config $ConfigPath
+Start-Service MaintainerAgent
 
-## 6. Save Your Secret Key!
-Make sure to save the SECRET_KEY from step 3.
+Write-Host ""
+Write-Host "============================================" -ForegroundColor Green
+Write-Host "  Installation Complete! ✓"                   -ForegroundColor Green
+Write-Host "============================================" -ForegroundColor Green
+Write-Host ""
+Write-Host "Secret Key: $SecretKey" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "Check status:  Get-Service MaintainerAgent" -ForegroundColor Yellow
+Write-Host "View logs:     Get-WinEvent -LogName Application -FilterXPath '*[System[Provider[@Name=\"MaintainerAgent\"]]]' | Select -First 20" -ForegroundColor Yellow
+Write-Host ""
 `
+
+  const linuxOneLiner = `curl -sSL http://${serverUrl}/install-agent.sh | sudo bash`
+  const windowsOneLiner = `irm http://${serverUrl}/install-agent.ps1 | iex`
 
   const copyToClipboard = async (text: string) => {
     try {
-      // Prüfe ob Clipboard API verfügbar ist
       if (navigator.clipboard && navigator.clipboard.writeText) {
         await navigator.clipboard.writeText(text)
         setCopied(true)
         setTimeout(() => setCopied(false), 2000)
       } else {
-        // Fallback für ältere Browser oder unsichere Kontexte
         const textArea = document.createElement('textarea')
         textArea.value = text
         textArea.style.position = 'fixed'
@@ -213,7 +220,6 @@ Make sure to save the SECRET_KEY from step 3.
         document.body.appendChild(textArea)
         textArea.focus()
         textArea.select()
-        
         try {
           document.execCommand('copy')
           setCopied(true)
@@ -232,16 +238,22 @@ Make sure to save the SECRET_KEY from step 3.
   }
 
   const downloadScript = () => {
-    const blob = new Blob([installScript], { type: 'text/plain' })
+    const isWindows = platform === 'windows'
+    const script = isWindows ? windowsInstallScript : linuxInstallScript
+    const ext = isWindows ? 'ps1' : 'sh'
+    const blob = new Blob([script], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'install-agent.sh'
+    a.download = `install-agent.${ext}`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
   }
+
+  const currentOneLiner = platform === 'windows' ? windowsOneLiner : linuxOneLiner
+  const currentScript = platform === 'windows' ? windowsInstallScript : linuxInstallScript
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -267,21 +279,49 @@ Make sure to save the SECRET_KEY from step 3.
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
+          {/* Platform Tabs */}
+          <div className="flex space-x-2 mb-6">
+            <button
+              onClick={() => setPlatform('linux')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                platform === 'linux'
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              <Terminal className="h-4 w-4" />
+              <span>Linux / macOS</span>
+            </button>
+            <button
+              onClick={() => setPlatform('windows')}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors text-sm font-medium ${
+                platform === 'windows'
+                  ? 'bg-cyan-600 text-white'
+                  : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+              }`}
+            >
+              <Monitor className="h-4 w-4" />
+              <span>Windows</span>
+            </button>
+          </div>
+
           {/* Quick Install */}
           <div className="mb-6">
             <h3 className="text-lg font-semibold text-white mb-3">
               🚀 {t('quickInstall.title')}
             </h3>
             <p className="text-sm text-slate-400 mb-3">
-              {t('quickInstall.description')}
+              {platform === 'windows'
+                ? t('quickInstall.descriptionWindows')
+                : t('quickInstall.description')}
             </p>
             
             <div className="relative">
               <pre className="bg-[#0f161d] text-cyan-300 p-4 rounded-lg overflow-x-auto text-sm border border-slate-800">
-                <code>curl -sSL http://{serverUrl}/install-agent.sh | sudo bash</code>
+                <code>{currentOneLiner}</code>
               </pre>
               <button
-                onClick={() => copyToClipboard(`curl -sSL http://${serverUrl}/install-agent.sh | sudo bash`)}
+                onClick={() => copyToClipboard(currentOneLiner)}
                 className="absolute top-2 right-2 p-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
               >
                 {copied ? (
@@ -301,7 +341,7 @@ Make sure to save the SECRET_KEY from step 3.
                 <span>{t('quickInstall.download')}</span>
               </button>
               <button
-                onClick={() => copyToClipboard(installScript)}
+                onClick={() => copyToClipboard(currentScript)}
                 className="flex items-center space-x-2 px-4 py-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors"
               >
                 {copied ? (
@@ -323,12 +363,63 @@ Make sure to save the SECRET_KEY from step 3.
           <div className="p-4 bg-amber-900/20 border border-amber-700/50 rounded-lg">
             <h4 className="font-semibold text-amber-400 mb-2">⚠️ {t('notes.title')}</h4>
             <ul className="text-sm text-amber-300/80 space-y-1 list-disc list-inside">
-              <li>{t('notes.root')}</li>
+              <li>{platform === 'windows' ? t('notes.runAsAdmin') : t('notes.root')}</li>
               <li>{t('notes.secret')}</li>
               <li>{t('notes.dashboard')}</li>
               <li>{t('notes.port')}</li>
+              {platform === 'windows' && (
+                <li>{t('notes.windowsService')}</li>
+              )}
             </ul>
           </div>
+
+          {/* Windows Troubleshooting */}
+          {platform === 'windows' && (
+            <div className="mt-6 p-4 bg-slate-800/50 border border-slate-700 rounded-lg">
+              <h4 className="font-semibold text-slate-200 mb-2">🔧 {t('troubleshooting.title')}</h4>
+              <p className="text-sm text-slate-400 mb-3">{t('troubleshooting.description')}</p>
+              
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs text-slate-400 mb-1">{t('troubleshooting.viewLogs')}</p>
+                  <div className="relative">
+                    <pre className="bg-[#0f161d] text-cyan-300 p-3 rounded text-xs border border-slate-700 overflow-x-auto">
+                      <code>Get-Content C:\ProgramData\maintainer-agent\agent.log -Tail 50</code>
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard('Get-Content C:\\ProgramData\\maintainer-agent\\agent.log -Tail 50')}
+                      className="absolute top-1 right-1 p-1.5 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
+                    >
+                      {copied ? (
+                        <Check className="h-3 w-3 text-emerald-400" />
+                      ) : (
+                        <Copy className="h-3 w-3 text-slate-300" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs text-slate-400 mb-1">{t('troubleshooting.checkService')}</p>
+                  <div className="relative">
+                    <pre className="bg-[#0f161d] text-cyan-300 p-3 rounded text-xs border border-slate-700 overflow-x-auto">
+                      <code>Get-Service MaintainerAgent</code>
+                    </pre>
+                    <button
+                      onClick={() => copyToClipboard('Get-Service MaintainerAgent')}
+                      className="absolute top-1 right-1 p-1.5 bg-slate-800 hover:bg-slate-700 rounded transition-colors"
+                    >
+                      {copied ? (
+                        <Check className="h-3 w-3 text-emerald-400" />
+                      ) : (
+                        <Copy className="h-3 w-3 text-slate-300" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

@@ -28,10 +28,10 @@ export async function GET(
       }
     }
 
-    // Fast path: serve base data from cache, enrich with commands/links from DB
+    // Fast path: serve base data from cache, enrich with commands/links/disks from DB
     const cached = stateCache.ready ? stateCache.getMachine(params.id) : null
     if (cached) {
-      const [commands, links] = await Promise.all([
+      const [commands, links, latestMetric] = await Promise.all([
         prisma.command.findMany({
           where: { machineId: params.id },
           orderBy: { createdAt: 'desc' },
@@ -41,7 +41,47 @@ export async function GET(
           where: { machineId: params.id },
           orderBy: { createdAt: 'desc' },
         }),
+        // Load latest metric with disks array
+        prisma.metric.findFirst({
+          where: { machineId: params.id },
+          orderBy: { timestamp: 'desc' },
+          select: {
+            cpuUsage: true,
+            ramUsage: true,
+            ramTotal: true,
+            ramUsed: true,
+            diskUsage: true,
+            diskTotal: true,
+            diskUsed: true,
+            disks: true,
+            uptime: true,
+          },
+        }),
       ])
+      
+      // Merge cached aggregates with DB disks array
+      const metricsWithDisks = cached.latestMetric ? {
+        cpuUsage: cached.latestMetric.cpuUsage,
+        ramUsage: cached.latestMetric.ramUsage,
+        ramTotal: cached.latestMetric.ramTotal,
+        ramUsed: cached.latestMetric.ramUsed,
+        diskUsage: cached.latestMetric.diskUsage,
+        diskTotal: cached.latestMetric.diskTotal,
+        diskUsed: cached.latestMetric.diskUsed,
+        disks: cached.latestMetric.disks,
+        uptime: cached.latestMetric.uptime,
+      } : (latestMetric ? {
+        cpuUsage: latestMetric.cpuUsage,
+        ramUsage: latestMetric.ramUsage,
+        ramTotal: latestMetric.ramTotal,
+        ramUsed: latestMetric.ramUsed,
+        diskUsage: latestMetric.diskUsage,
+        diskTotal: latestMetric.diskTotal,
+        diskUsed: latestMetric.diskUsed,
+        disks: latestMetric.disks,
+        uptime: latestMetric.uptime,
+      } : null)
+      
       return NextResponse.json({
         machine: {
           id: cached.id,
@@ -53,7 +93,7 @@ export async function GET(
           notes: cached.notes,
           createdAt: cached.createdAt,
           updatedAt: cached.updatedAt,
-          metrics: cached.latestMetric ? [cached.latestMetric] : [],
+          metrics: metricsWithDisks ? [metricsWithDisks] : [],
           commands,
           ports: cached.ports,
           links,
@@ -86,6 +126,7 @@ export async function GET(
             diskUsage: true,
             diskTotal: true,
             diskUsed: true,
+            disks: true,
             uptime: true
           }
         },

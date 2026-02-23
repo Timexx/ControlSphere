@@ -47,11 +47,11 @@ services:
     image: ghcr.io/timexx/controlsphere:latest
     # ── Local build (for NAS / slow connections / development) ────────────
     # If pulling the image fails (e.g. registry timeout on Synology/QNAP),
-    # comment out 'image' above and uncomment the two lines below to build
-    # from source.  Or use docker-compose.nas.yml which does this by default.
-    # build:
-    #   context: ./server
-    #   dockerfile: Dockerfile
+    # comment out 'image' above and uncomment the block below to build
+    # from source. Or use docker-compose.nas.yml which does this by default.
+    build:
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"

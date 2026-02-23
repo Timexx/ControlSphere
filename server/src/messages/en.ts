@@ -120,6 +120,9 @@ const messages = {
     loading: {
       sync: 'Syncing node status...'
     },
+    shared: {
+      noData: 'No data'
+    },
     header: {
       eyebrow: 'Node Control',
       securityLink: 'View security events',
@@ -626,6 +629,7 @@ const messages = {
         fileIntegrity: {
           title: '1. File Integrity Monitoring',
           description: 'Monitors the entire filesystem for unexpected changes. Severity is automatically classified by path: system-critical files (e.g. /etc/) are rated HIGH, application files MEDIUM, and log/temp/Docker files LOW.',
+          descriptionWindows: 'Monitors critical system files for unexpected changes. Severity is automatically classified by path: system-critical files (e.g. System32\\config) are rated HIGH, Program Files MEDIUM, and Temp/logs LOW.',
           files: 'Monitored files:',
           filesList: [
             '/etc/passwd',
@@ -652,6 +656,7 @@ const messages = {
         authLogMonitoring: {
           title: '3. Auth Log Monitoring',
           description: 'Analyzes authentication logs for suspicious activities such as brute-force attacks or root logins.',
+          descriptionWindows: 'Analyzes Windows Security Event Log for suspicious activities such as brute-force attacks (Event ID 4625) and successful logons (Event ID 4624).',
           failedLogins: 'Failed logins:',
           failedAttempts: [
             { range: '3-9 attempts', severity: 'medium' },
@@ -661,6 +666,7 @@ const messages = {
           rootLogins: 'Root logins:',
           rootLoginsDetail: 'Each successful root login is reported as a "medium" event.',
           monitoredFiles: 'Monitored log files:',
+          monitoredSources: 'Monitored event sources',
           logFiles: [
             '/var/log/auth.log (Debian/Ubuntu)',
             '/var/log/secure (RHEL/CentOS)'
@@ -691,14 +697,19 @@ const messages = {
         severityClassification: {
           title: '6. Severity Classification',
           description: 'File integrity events are automatically classified by path to reduce noise and prioritize critical changes.',
+          descriptionWindows: 'File integrity events are automatically classified by path to reduce noise and prioritize critical changes on Windows systems.',
           high: 'HIGH — System-critical paths',
           highPaths: '/etc/, /root/.ssh/, /usr/bin/, /usr/sbin/, /sbin/, /bin/, /boot/, /lib/',
+          highPathsWindows: 'System32\\config\\, System32\\drivers\\etc\\, GroupPolicy\\, Windows\\System32\\',
           medium: 'MEDIUM — Application paths',
           mediumPaths: '/opt/, /srv/, /var/www/, /home/*/bin/, and other application directories',
+          mediumPathsWindows: 'Program Files\\, Program Files (x86)\\, ProgramData\\, Users\\*\\AppData\\',
           low: 'LOW — Logs & temporary files',
           lowPaths: '*.log, /var/log/, /tmp/, /var/cache/, Docker overlay layers, PM2 logs, letsencrypt logs',
+          lowPathsWindows: '*.log, Windows\\Temp\\, Users\\*\\AppData\\Local\\Temp\\, Windows\\Logs\\',
           ignored: 'IGNORED — Completely filtered',
           ignoredPaths: '/var/lib/docker/containers/, /var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/',
+          ignoredPathsWindows: 'Windows\\WinSxS\\, Windows\\SoftwareDistribution\\, $Recycle.Bin\\, System Volume Information\\',
           filterNote: 'The default view hides LOW events. Use the filter buttons to show all events if needed.'
         }
       }
@@ -712,7 +723,10 @@ const messages = {
         apt: 'Update with apt',
         yum: 'Update with yum',
         dnf: 'Update with dnf',
-        pacman: 'Update with pacman'
+        pacman: 'Update with pacman',
+        choco: 'Update with Chocolatey',
+        winget: 'Update with winget',
+        windowsUpdate: 'Update via Windows Update'
       }
     },
     tooltips: {
@@ -831,6 +845,7 @@ const messages = {
     quickInstall: {
       title: 'Quick install (recommended)',
       description: 'Copy this command and run it on your Linux system:',
+      descriptionWindows: 'Run this command in an elevated PowerShell terminal (Run as Administrator):',
       download: 'Download install script',
       copyScript: 'Copy script',
     },
@@ -839,9 +854,17 @@ const messages = {
     notes: {
       title: 'Important notes:',
       root: 'The agent must run as root (sudo)',
+      runAsAdmin: 'Run PowerShell as Administrator',
+      windowsService: 'The agent runs as the "MaintainerAgent" Windows Service',
       secret: 'Store the generated secret key securely',
       dashboard: 'The agent appears automatically in the dashboard after installation',
       port: 'Port 3000 must be reachable from the VM system',
+    },
+    troubleshooting: {
+      title: 'Troubleshooting (Windows)',
+      description: 'If the agent does not appear in the dashboard, check the following:',
+      viewLogs: 'View agent logs (last 50 lines):',
+      checkService: 'Check service status:',
     },
     close: 'Close',
   },

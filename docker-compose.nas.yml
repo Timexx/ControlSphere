@@ -61,11 +61,11 @@ services:
       - secrets_data:/secrets
 
   # -- ControlSphere Server ------------------------------------------------
-  # Built locally from ./server — no registry pull needed.
+  # Built locally from source — no registry pull needed.
   server:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"

@@ -13,6 +13,7 @@
 
 // ─── HIGH: System-critical paths ─────────────────────────────────────────────
 const HIGH_PATTERNS: RegExp[] = [
+  // Linux
   /^\/etc\//i,
   /^\/root\/.ssh\//i,
   /^\/root\/\.bashrc$/i,
@@ -28,6 +29,12 @@ const HIGH_PATTERNS: RegExp[] = [
   /^\/bin\//i,
   /^\/boot\//i,
   /^\/var\/spool\/cron/i,
+  // Windows
+  /\\System32\\config\\/i,
+  /\\System32\\drivers\\etc\\/i,
+  /\\GroupPolicy\\/i,
+  /\\Windows\\System32\\/i,
+  /\\Windows\\SysWOW64\\/i,
 ]
 
 // ─── LOW: Noise paths (logs, temp, caches, Docker ephemeral) ─────────────────
@@ -68,6 +75,16 @@ const LOW_PATTERNS: RegExp[] = [
   // letsencrypt/certbot logs & renewal working files
   /letsencrypt-log\//i,
   /\/certbot\//i,
+
+  // Windows temp, logs, ephemeral
+  /\\Windows\\Temp\\/i,
+  /\\Windows\\Logs\\/i,
+  /\\Windows\\Prefetch\\/i,
+  /\\AppData\\Local\\Temp\\/i,
+  /\\Windows\\WinSxS\\/i,
+  /\\Windows\\SoftwareDistribution\\/i,
+  /\\\$Recycle\.Bin\\/i,
+  /\\System Volume Information\\/i,
 ]
 
 /**

@@ -1,5 +1,6 @@
-# Build binary
+# Build binaries
 maintainer-agent
+bin/
 
 # Config
 /etc/maintainer-agent/config.json

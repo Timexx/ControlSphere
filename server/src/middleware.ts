@@ -14,6 +14,7 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/session-time',
   '/api/auth/change-language',
   '/install-agent.sh',
+  '/install-agent.ps1',
   '/favicon.ico',
   '/favicon.svg',
   '/apple-touch-icon.png',
@@ -49,6 +50,7 @@ function isBypassedPath(pathname: string) {
     pathname.startsWith('/_next') ||
     pathname.startsWith('/api/register') ||
     pathname.startsWith('/api/agent') ||
+    pathname.startsWith('/downloads/') ||
     pathname.startsWith('/ws/')
   )
 }

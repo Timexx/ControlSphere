@@ -2,7 +2,7 @@ import crypto from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
-import { setScanProgress } from '@/lib/scan-progress-store'
+import { setScanProgress, clearScanProgress } from '@/lib/scan-progress-store'
 
 function hashSecretKey(secret: string) {
   return crypto.createHash('sha256').update(secret).digest('hex')
@@ -63,12 +63,23 @@ export async function POST(request: NextRequest) {
       startedAt: startedAt || new Date().toISOString()
     })
 
-    setScanProgress(machineId, {
-      progress,
-      phase,
-      etaSeconds,
-      startedAt: startedAt || new Date().toISOString()
-    })
+    // Clear progress if scan failed or completed
+    if (phase === 'failed' || (phase === 'finalizing' && progress >= 100)) {
+      // Wait a moment before clearing so UI can show completion
+      setTimeout(() => {
+        clearScanProgress(machineId)
+        prisma.scanProgressState.deleteMany({ where: { machineId } }).catch(err => {
+          console.error('Failed to clear scan progress state:', err)
+        })
+      }, 2000)
+    } else {
+      setScanProgress(machineId, {
+        progress,
+        phase,
+        etaSeconds,
+        startedAt: startedAt || new Date().toISOString()
+      })
+    }
 
     await prisma.scanProgressState.upsert({
       where: { machineId },

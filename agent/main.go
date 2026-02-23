@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,13 +19,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+	"github.com/maintainer/agent/platform"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
@@ -33,9 +33,11 @@ import (
 )
 
 var (
-	serverURL = flag.String("server", "ws://localhost:3000/ws/agent", "Maintainer server WebSocket URL")
-	secretKey = flag.String("key", "", "Secret key for authentication")
-	configFile = flag.String("config", "/etc/maintainer-agent/config.json", "Path to config file")
+	serverURL      = flag.String("server", "ws://localhost:3000/ws/agent", "Maintainer server WebSocket URL")
+	secretKey      = flag.String("key", "", "Secret key for authentication")
+	configFile     = flag.String("config", "", "Path to config file (default: OS-specific)")
+	svcInstall     = flag.Bool("install", false, "Install as Windows Service (Windows only)")
+	svcUninstall   = flag.Bool("uninstall", false, "Uninstall Windows Service (Windows only)")
 )
 
 type Config struct {
@@ -50,6 +52,7 @@ type RegisterMessage struct {
 	IP        string `json:"ip"`
 	OSInfo    OSInfo `json:"osInfo"`
 	SecretKey string `json:"secretKey"`
+	Platform  string `json:"platform"`
 }
 
 // HeartbeatMessage is sent periodically with metrics and port data
@@ -84,31 +87,29 @@ type Message struct {
 	MachineID string          `json:"machineId,omitempty"`
 }
 
-type OSInfo struct {
-	Distro  string `json:"distro"`
-	Release string `json:"release"`
-	Kernel  string `json:"kernel"`
+// Type aliases — canonical definitions live in the platform package.
+type OSInfo = platform.OSInfo
+
+type DiskInfo struct {
+	Path  string  `json:"path"`  // Mount point or drive letter (e.g., C:\, /dev/sda1, /home)
+	Usage float64 `json:"usage"` // Percentage
+	Total float64 `json:"total"` // GB
+	Used  float64 `json:"used"`  // GB
 }
-
-
 
 type Metrics struct {
-	CPUUsage  float64 `json:"cpuUsage"`
-	RAMUsage  float64 `json:"ramUsage"`
-	RAMTotal  float64 `json:"ramTotal"`
-	RAMUsed   float64 `json:"ramUsed"`
-	DiskUsage float64 `json:"diskUsage"`
-	DiskTotal float64 `json:"diskTotal"`
-	DiskUsed  float64 `json:"diskUsed"`
-	Uptime    uint64  `json:"uptime"`
+	CPUUsage  float64    `json:"cpuUsage"`
+	RAMUsage  float64    `json:"ramUsage"`
+	RAMTotal  float64    `json:"ramTotal"`
+	RAMUsed   float64    `json:"ramUsed"`
+	DiskUsage float64    `json:"diskUsage"` // Aggregate total for backward compat
+	DiskTotal float64    `json:"diskTotal"` // Aggregate total
+	DiskUsed  float64    `json:"diskUsed"`  // Aggregate total
+	Disks     []DiskInfo `json:"disks"`     // Per-disk breakdown
+	Uptime    uint64     `json:"uptime"`
 }
 
-type Port struct {
-	Port    int    `json:"port"`
-	Proto   string `json:"proto"`
-	Service string `json:"service"`
-	State   string `json:"state"`
-}
+type Port = platform.Port
 
 type ExecuteCommandData struct {
 	CommandID string `json:"commandId"`
@@ -168,38 +169,10 @@ type AuditEvent struct {
 	Timestamp time.Time `json:"timestamp,omitempty"`
 }
 
-type PackageInfo struct {
-	Name    string   `json:"name"`
-	Version string   `json:"version"`
-	Manager string   `json:"manager,omitempty"`
-	Status  string   `json:"status,omitempty"`
-	CveIds  []string `json:"cveIds,omitempty"`
-}
-
-type ScanSummary struct {
-	Total           int `json:"total"`
-	Updates         int `json:"updates"`
-	SecurityUpdates int `json:"securityUpdates"`
-}
-
-// SecurityFinding represents a config drift or integrity issue
-type SecurityFinding struct {
-	TargetPath string `json:"targetPath"`
-	Message    string `json:"message"`
-	Severity   string `json:"severity"`
-	Expected   string `json:"expected,omitempty"`
-	Actual     string `json:"actual,omitempty"`
-	Hash       string `json:"hash,omitempty"`
-}
-
-// SecurityEvent represents a general security event
-type SecurityEvent struct {
-	Type        string            `json:"type"`
-	Severity    string            `json:"severity"`
-	Message     string            `json:"message"`
-	Data        map[string]string `json:"data,omitempty"`
-	Fingerprint string            `json:"fingerprint,omitempty"` // Unique identifier for deduplication
-}
+type PackageInfo = platform.PackageInfo
+type ScanSummary = platform.PackageSummary
+type SecurityFinding = platform.SecurityFinding
+type SecurityEvent = platform.SecurityEvent
 
 type ScanPayload struct {
 	MachineID         string            `json:"machineId"`
@@ -213,11 +186,12 @@ type ScanPayload struct {
 type Agent struct {
 	conn      *websocket.Conn
 	config    Config
-	terminals map[string]*os.File
+	terminals map[string]platform.Terminal
 	writeMu   sync.Mutex
 	httpMu    sync.Mutex
 	httpClient *http.Client
 	machineId string
+	shutdownCh chan struct{} // signals graceful shutdown (e.g. update)
 
 	packageScanMu   sync.Mutex
 	lastPackageScan time.Time
@@ -228,7 +202,6 @@ type Agent struct {
 	// Security monitoring state
 	fileHashes         map[string]string // Stores hashes for integrity monitoring
 	fileHashesMu       sync.Mutex
-	lastAuthLogPos     int64             // Last read position in auth.log
 	
 	// Track reported events to avoid duplicates
 	reportedEvents     map[string]time.Time // fingerprint -> last reported time
@@ -580,176 +553,114 @@ func (a *Agent) sendSecurityEvents(events []SecurityEvent) {
 	log.Printf("✅ Security events sent: %d events", len(events))
 }
 
-// checkAuthLogIncremental reads new entries from auth log and returns events with fingerprints
+// checkAuthLogIncremental delegates to the platform-specific implementation
+// which reads new entries from the OS auth/security log and returns events
+// with fingerprints. The platform tracks its own read position internally.
 func (a *Agent) checkAuthLogIncremental() []SecurityEvent {
-	var events []SecurityEvent
-
-	// Try common auth log locations
-	authLogPaths := []string{
-		"/var/log/auth.log",      // Debian/Ubuntu
-		"/var/log/secure",        // RHEL/CentOS
-		"/var/log/messages",      // Fallback
-	}
-
-	var authLogPath string
-	for _, path := range authLogPaths {
-		if _, err := os.Stat(path); err == nil {
-			authLogPath = path
-			break
-		}
-	}
-
-	if authLogPath == "" {
-		return events
-	}
-
-	file, err := os.Open(authLogPath)
-	if err != nil {
-		return events
-	}
-	defer file.Close()
-
-	// Get file info to check for log rotation
-	info, err := file.Stat()
-	if err != nil {
-		return events
-	}
-
-	// If file is smaller than last position, log was rotated - reset
-	if info.Size() < a.lastAuthLogPos {
-		log.Printf("Auth log rotated, resetting position")
-		a.lastAuthLogPos = 0
-	}
-
-	// Seek to last position
-	if a.lastAuthLogPos > 0 {
-		file.Seek(a.lastAuthLogPos, 0)
-	} else {
-		// First run - read last 50KB to catch recent events
-		if info.Size() > 51200 {
-			file.Seek(-51200, 2)
-		}
-		// else start from beginning
-		log.Printf("First security scan - reading recent auth log entries")
-	}
-
-	scanner := bufio.NewScanner(file)
-	
-	// Track new failed logins in this scan
-	newFailedLogins := make(map[string]int)
-	newRootLogins := 0
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		lineLower := strings.ToLower(line)
-
-		// Check for failed login attempts
-		if strings.Contains(lineLower, "failed password") || 
-		   strings.Contains(lineLower, "authentication failure") ||
-		   strings.Contains(lineLower, "invalid user") {
-			ipMatch := extractIP(line)
-			if ipMatch == "" {
-				ipMatch = "unknown"
-			}
-			newFailedLogins[ipMatch]++
-		}
-
-		// Check for root login
-		if strings.Contains(lineLower, "accepted") && strings.Contains(lineLower, "root") {
-			newRootLogins++
-		}
-	}
-
-	// Update position for next read
-	pos, _ := file.Seek(0, 1)
-	a.lastAuthLogPos = pos
-
-	// Update cumulative counts and generate events
 	a.failedLoginsMu.Lock()
-	for ip, newCount := range newFailedLogins {
-		// Add to cumulative count
-		a.failedLoginCounts[ip] += newCount
-		totalCount := a.failedLoginCounts[ip]
-
-		// Only generate event if threshold crossed
-		if totalCount >= 3 {
-			severity := "medium"
-			if totalCount >= 10 {
-				severity = "high"
-			}
-			if totalCount >= 50 {
-				severity = "critical"
-			}
-
-			// Fingerprint based on IP - same IP = same event (will be updated)
-			fingerprint := fmt.Sprintf("failed_auth:%s", ip)
-
-			events = append(events, SecurityEvent{
-				Type:        "failed_auth",
-				Severity:    severity,
-				Message:     fmt.Sprintf("Multiple failed login attempts detected: %d attempts from %s", totalCount, ip),
-				Fingerprint: fingerprint,
-				Data: map[string]string{
-					"source_ip":     ip,
-					"attempt_count": fmt.Sprintf("%d", totalCount),
-				},
-			})
-			log.Printf("🔴 AUTH ALERT: %d total failed login attempts from %s (+%d new)", totalCount, ip, newCount)
-		}
-	}
+	events := platform.Current.CheckAuthLogIncremental(a.failedLoginCounts)
 	a.failedLoginsMu.Unlock()
-
-	// Root logins - each one is a separate event
-	if newRootLogins > 0 {
-		fingerprint := fmt.Sprintf("root_login:%d", time.Now().Unix()/300) // 5-minute buckets
-		events = append(events, SecurityEvent{
-			Type:        "root_login",
-			Severity:    "medium",
-			Message:     fmt.Sprintf("Root login detected: %d login(s)", newRootLogins),
-			Fingerprint: fingerprint,
-			Data: map[string]string{
-				"login_count": fmt.Sprintf("%d", newRootLogins),
-			},
-		})
-		log.Printf("🟡 AUTH ALERT: %d root logins detected", newRootLogins)
-	}
-
 	return events
 }
 
 func main() {
 	flag.Parse()
 
-	config := loadConfig()
+	// Windows Service management commands
+	if *svcInstall {
+		if err := installService(); err != nil {
+			log.Fatalf("Failed to install service: %v", err)
+		}
+		return
+	}
+	if *svcUninstall {
+		if err := uninstallService(); err != nil {
+			log.Fatalf("Failed to uninstall service: %v", err)
+		}
+		return
+	}
+
+	// If running as a Windows Service, dispatch to the SCM handler.
+	// runAsService() returns false on non-Windows or when running interactively.
+	if runAsService() {
+		return
+	}
+
+	// Interactive / foreground mode
+	runAgent()
+}
+
+// runAgent contains the main agent loop. It is called directly in foreground
+// mode and from the Windows Service handler in service mode.
+func runAgent() {
+	// Use platform-specific default config path if not overridden
+	if *configFile == "" {
+		*configFile = platform.Current.ConfigPath()
+	}
+
+	log.Printf("runAgent: platform=%s, configFile=%s", runtime.GOOS, *configFile)
+
+	config, err := loadConfig()
+	if err != nil {
+		log.Printf("FATAL: Failed to load config: %v", err)
+		return
+	}
+
+	log.Printf("runAgent: serverURL=%s, secretKey=%s..., platform=%s",
+		config.ServerURL,
+		func() string {
+			if len(config.SecretKey) >= 8 {
+				return config.SecretKey[:8]
+			}
+			return "(empty)"
+		}(),
+		runtime.GOOS,
+	)
 
 	agent := &Agent{
 		config:            config,
-		terminals:         make(map[string]*os.File),
-		httpClient:        &http.Client{Timeout: 10 * time.Second},
+		terminals:         make(map[string]platform.Terminal),
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
 		fileHashes:        make(map[string]string),
 		reportedEvents:    make(map[string]time.Time),
 		failedLoginCounts: make(map[string]int),
+		shutdownCh:        make(chan struct{}),
 	}
 
-	// Handle graceful shutdown
+	// Handle graceful shutdown with platform-appropriate signals
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	shutdownCh := agent.shutdownCh
+	signal.Notify(sigChan, platform.Current.ShutdownSignals()...)
 
 	go func() {
 		<-sigChan
 		log.Println("Shutting down gracefully...")
+		close(shutdownCh)
 		if agent.conn != nil {
 			agent.conn.Close()
 		}
-		os.Exit(0)
+		// Do NOT call os.Exit here — it bypasses the Windows Service
+		// handler's proper shutdown sequence. runAgent() returns
+		// once shutdownCh is closed, letting the SCM handler clean up.
 	}()
 
 	// Connect and run
 	for {
+		select {
+		case <-shutdownCh:
+			log.Println("runAgent: shutdown signal received, exiting connect loop")
+			return
+		default:
+		}
+
 		err := agent.connect()
 		if err != nil {
 			log.Printf("Connection error: %v. Retrying in 5 seconds...", err)
-			time.Sleep(5 * time.Second)
+			select {
+			case <-shutdownCh:
+				return
+			case <-time.After(5 * time.Second):
+			}
 			continue
 		}
 
@@ -758,16 +669,31 @@ func main() {
 			log.Printf("Runtime error: %v. Reconnecting in 5 seconds...", err)
 		}
 
-		time.Sleep(5 * time.Second)
+		select {
+		case <-shutdownCh:
+			return
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 
-func loadConfig() Config {
+func loadConfig() (Config, error) {
 	config := Config{}
 
 	// Try loading from config file
 	if data, err := os.ReadFile(*configFile); err == nil {
-		json.Unmarshal(data, &config)
+		// Strip UTF-8 BOM if present (PowerShell 5.1 writes BOM with -Encoding UTF8)
+		if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+			log.Printf("Stripping UTF-8 BOM from config file %s", *configFile)
+			data = data[3:]
+		}
+		if err := json.Unmarshal(data, &config); err != nil {
+			log.Printf("⚠️  Failed to parse config file %s: %v", *configFile, err)
+		} else {
+			log.Printf("✓ Config loaded from %s", *configFile)
+		}
+	} else {
+		log.Printf("⚠️  Config file not found at %s: %v", *configFile, err)
 	}
 
 	// Override with flags if provided
@@ -784,7 +710,7 @@ func loadConfig() Config {
 	}
 
 	if config.SecretKey == "" {
-		log.Fatal("Secret key is required. Use -key flag or set in config file.")
+		return config, fmt.Errorf("secret key is required - use -key flag or set in config file (config: %s)", *configFile)
 	}
 
 	// AUTO-MIGRATION: Normalize secret key to 64 hex chars
@@ -795,7 +721,7 @@ func loadConfig() Config {
 		saveConfig(config)
 	}
 
-	return config
+	return config, nil
 }
 
 // normalizeSecretKey ensures the secret key is exactly 64 hex characters
@@ -847,7 +773,14 @@ func saveConfig(config Config) {
 func (a *Agent) connect() error {
 	log.Printf("Connecting to %s...", a.config.ServerURL)
 
-	conn, _, err := websocket.DefaultDialer.Dial(a.config.ServerURL, nil)
+	// Add connection timeout to prevent hanging on unreachable servers
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 10 * time.Second
+
+	conn, _, err := dialer.DialContext(ctx, a.config.ServerURL, nil)
 	if err != nil {
 		return fmt.Errorf("dial error: %w", err)
 	}
@@ -861,15 +794,16 @@ func (a *Agent) connect() error {
 
 func (a *Agent) register() error {
 	hostname, _ := os.Hostname()
-	ip := getOutboundIP()
-	osInfo := getOSInfo()
+	ip := platform.Current.GetOutboundIP()
+	osInfo := platform.Current.GetOSInfo()
 
 	msg := RegisterMessage{
 		Type:      "register",
 		Hostname:  hostname,
 		IP:        ip,
-		OSInfo:    osInfo,
+		OSInfo:    OSInfo{Distro: osInfo.Distro, Release: osInfo.Release, Kernel: osInfo.Kernel},
 		SecretKey: a.config.SecretKey,
+		Platform:  runtime.GOOS,
 	}
 
 	return a.writeJSON(msg)
@@ -915,7 +849,7 @@ func (a *Agent) sendHeartbeat() {
 	}
 
 	metrics := collectMetrics()
-	ports := collectPorts()
+	ports := platform.Current.CollectPorts()
 
 	msg := HeartbeatMessage{
 		Type:      "heartbeat",
@@ -1133,10 +1067,11 @@ func (a *Agent) runPackageScan() {
 
 	a.sendScanProgress("inventory", 5, 0)
 
-	pkgs, summary, err := collectPackages()
+	pkgs, summary, err := platform.Current.CollectPackages()
 	if err != nil {
-		log.Printf("Package scan skipped: %v", err)
-		return
+		log.Printf("Package collection failed (continuing with security checks): %v", err)
+		pkgs = []platform.PackageInfo{}
+		summary = platform.PackageSummary{}
 	}
 
 	eta := func(completedSteps int) int64 {
@@ -1186,13 +1121,12 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 	isSystemCommand := false
 	lowerCmd := strings.ToLower(strings.TrimSpace(data.Command))
 
-	if lowerCmd == "reboot" || lowerCmd == "shutdown" ||
-		strings.Contains(lowerCmd, "systemctl reboot") ||
-		strings.Contains(lowerCmd, "systemctl poweroff") ||
-		strings.Contains(lowerCmd, "shutdown -r") ||
-		strings.Contains(lowerCmd, "shutdown -h") {
-		isSystemCommand = true
-		log.Printf("Detected system command, will execute in background")
+	for _, dangerous := range platform.Current.DangerousCommands() {
+		if lowerCmd == strings.ToLower(dangerous) || strings.Contains(lowerCmd, strings.ToLower(dangerous)) {
+			isSystemCommand = true
+			log.Printf("Detected system command, will execute in background")
+			break
+		}
 	}
 
 	sendOutput := func(output string, completed bool, exitCode int) {
@@ -1218,21 +1152,32 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 
 		go func() {
 			time.Sleep(1 * time.Second)
-			cmd := exec.Command("sh", "-c", data.Command)
+			shellArgs := platform.Current.ShellCommand()
+			cmd := exec.Command(shellArgs[0], append(shellArgs[1:], data.Command)...)
 			cmd.Run()
 		}()
 		return
 	}
 
-	cmd := exec.Command("/bin/bash", "-c", data.Command)
-	ptmx, err := pty.Start(cmd)
+	// Execute command via platform shell and capture output via pipes
+	shellArgs := platform.Current.ShellCommand()
+	cmd := exec.Command(shellArgs[0], append(shellArgs[1:], data.Command)...)
+
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		log.Printf("Failed to start command PTY: %v", err)
+		log.Printf("Failed to create stdout pipe: %v", err)
+		sendOutput(fmt.Sprintf("Failed to start command: %v\n", err), true, 1)
+		return
+	}
+	cmd.Stderr = cmd.Stdout // merge stderr into stdout
+
+	if err := cmd.Start(); err != nil {
+		log.Printf("Failed to start command: %v", err)
 		sendOutput(fmt.Sprintf("Failed to start command: %v\n", err), true, 1)
 		return
 	}
 
-	// Use a channel to signal when PTY reading is done
+	// Use a channel to signal when reading is done
 	readerDone := make(chan struct{})
 
 	// Stream output
@@ -1240,19 +1185,16 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 		defer close(readerDone)
 		buf := make([]byte, 8192)
 		for {
-			n, err := ptmx.Read(buf)
+			n, err := stdout.Read(buf)
 			if n > 0 {
 				sendOutput(string(buf[:n]), false, 0)
 			}
 			if err != nil {
-				// EOF is expected when PTY closes; other errors log but are non-fatal
 				if err != io.EOF {
-					// Suppress "input/output error" after PTY is closed
 					if !strings.Contains(err.Error(), "input/output error") {
-						log.Printf("Command PTY read error: %v", err)
+						log.Printf("Command read error: %v", err)
 					}
 				}
-				ptmx.Close()
 				return
 			}
 		}
@@ -1261,7 +1203,7 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 	go func() {
 		err := cmd.Wait()
 
-		// Wait for the PTY reader to finish sending all output
+		// Wait for the reader to finish sending all output
 		<-readerDone
 
 		// Small delay to ensure all output messages are processed before completion signal
@@ -1314,19 +1256,50 @@ func (a *Agent) updateAgent(data UpdateAgentData) {
 		}
 	}
 
-	// Determine the source URL (API endpoint for agent source code)
+	// Determine the server URL
 	serverURL := data.ServerURL
 	if serverURL == "" {
 		sendOutput("Error: No server URL provided for update\n", true, 1)
 		return
 	}
 	
-	// Remove trailing slash and construct source API URL
+	// Remove trailing slash
 	serverURL = strings.TrimSuffix(serverURL, "/")
-	sourceURL := serverURL + "/api/agent-source"
+	
+	// Determine binary filename based on OS and architecture
+	var binaryName string
+	switch runtime.GOOS {
+	case "windows":
+		switch runtime.GOARCH {
+		case "amd64":
+			binaryName = "maintainer-agent-windows-amd64.exe"
+		case "arm64":
+			binaryName = "maintainer-agent-windows-arm64.exe"
+		default:
+			sendOutput(fmt.Sprintf("Error: Unsupported Windows architecture: %s\n", runtime.GOARCH), true, 1)
+			return
+		}
+	case "linux":
+		switch runtime.GOARCH {
+		case "amd64":
+			binaryName = "maintainer-agent-linux-amd64"
+		case "arm64":
+			binaryName = "maintainer-agent-linux-arm64"
+		default:
+			sendOutput(fmt.Sprintf("Error: Unsupported Linux architecture: %s\n", runtime.GOARCH), true, 1)
+			return
+		}
+	default:
+		sendOutput(fmt.Sprintf("Error: Unsupported OS: %s\n", runtime.GOOS), true, 1)
+		return
+	}
+	
+	// Construct binary download URL
+	binaryURL := serverURL + "/downloads/" + binaryName
 
-	sendOutput(fmt.Sprintf("🔄 Starting secure agent update (build from source)...\nSource URL: %s\n", sourceURL), false, 0)
-	sendOutput("🔐 Update includes cryptographic signature verification\n", false, 0)
+	sendOutput(fmt.Sprintf("🔄 Starting agent update...\n"), false, 0)
+	sendOutput(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH), false, 0)
+	sendOutput(fmt.Sprintf("Binary URL: %s\n", binaryURL), false, 0)
 
 	// Get current agent binary path
 	currentBinary, err := os.Executable()
@@ -1335,486 +1308,91 @@ func (a *Agent) updateAgent(data UpdateAgentData) {
 		return
 	}
 	sendOutput(fmt.Sprintf("Current binary: %s\n", currentBinary), false, 0)
-
-	// Create the update script with signature verification
-	// This script will:
-	// 1. Download the signed source code from the server
-	// 2. Verify the RSA-SHA256 signature
-	// 3. Verify SHA-256 hashes of all files
-	// 4. Only proceed with build if verification passes
-	// 5. Build and install the new binary
 	
-	updateScript := fmt.Sprintf(`#!/bin/bash
-# Maintainer Agent Self-Update Script (Secure Build from Source)
-# This script runs independently of the agent process
-# Security: RSA-SHA256 signature verification + SHA-256 hash validation
-
-SOURCE_URL="%s"
-CURRENT_BINARY="%s"
-LOG_FILE="/tmp/maintainer-agent-update.log"
-BUILD_DIR="/tmp/maintainer-agent-build"
-NEW_BINARY="/tmp/maintainer-agent-new"
-RESPONSE_FILE="/tmp/maintainer-agent-response.json"
-
-log() {
-    echo "[$(date '+%%Y-%%m-%%d %%H:%%M:%%S')] $1" >> "$LOG_FILE"
-    echo "$1"
-}
-
-cleanup_build() {
-    rm -rf "$BUILD_DIR"
-    rm -f "$NEW_BINARY"
-    rm -f "$RESPONSE_FILE"
-    rm -f /tmp/maintainer-verify.py
-}
-
-log "========================================"
-log "Maintainer Agent Secure Update Started"
-log "========================================"
-log "Source URL: $SOURCE_URL"
-log "Current binary: $CURRENT_BINARY"
-
-# Wait for the agent to send its completion message and disconnect
-log "Waiting 3 seconds for agent to complete..."
-sleep 3
-
-# Stop the service gracefully
-log "Stopping maintainer-agent service..."
-if systemctl is-active --quiet maintainer-agent; then
-    systemctl stop maintainer-agent
-    sleep 2
-fi
-
-# Make sure the old process is gone
-log "Ensuring old agent process is terminated..."
-pkill -9 -f "maintainer-agent" 2>/dev/null || true
-sleep 1
-
-# Check if Go is installed
-if ! command -v go &> /dev/null; then
-    log "ERROR: Go is not installed! Cannot build from source."
-    log "Please install Go first: https://golang.org/doc/install"
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-GO_VERSION=$(go version)
-log "Go version: $GO_VERSION"
-
-# Check for Python (required for signature verification)
-PYTHON_CMD=""
-if command -v python3 &> /dev/null; then
-    PYTHON_CMD="python3"
-elif command -v python &> /dev/null; then
-    PYTHON_CMD="python"
-else
-    log "ERROR: Python is required for signature verification!"
-    log "Please install Python: apt-get install python3"
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-log "Using Python: $PYTHON_CMD"
-
-# Create build directory
-log "Creating build directory..."
-cleanup_build
-mkdir -p "$BUILD_DIR"
-cd "$BUILD_DIR"
-
-# Download source code
-log "Downloading signed source code from: $SOURCE_URL"
-
-if command -v curl &> /dev/null; then
-    curl -fsSL "$SOURCE_URL" > "$RESPONSE_FILE" 2>/dev/null
-elif command -v wget &> /dev/null; then
-    wget -q -O "$RESPONSE_FILE" "$SOURCE_URL" 2>/dev/null
-else
-    log "ERROR: Neither curl nor wget available!"
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-if [ ! -s "$RESPONSE_FILE" ]; then
-    log "ERROR: Failed to download source code!"
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-# Check for error in response
-if grep -q '"error"' "$RESPONSE_FILE"; then
-    log "ERROR: Server returned error:"
-    cat "$RESPONSE_FILE"
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-# Create Python verification script
-log "🔐 Verifying cryptographic signature..."
-cat > /tmp/maintainer-verify.py << 'VERIFY_SCRIPT'
-#!/usr/bin/env python3
-"""
-Agent Update Signature Verification
-Verifies RSA-SHA256 signature and SHA-256 hashes
-"""
-import json
-import hashlib
-import sys
-import os
-
-# Try to import cryptography library
-try:
-    from cryptography.hazmat.primitives import hashes, serialization
-    from cryptography.hazmat.primitives.asymmetric import padding
-    from cryptography.hazmat.backends import default_backend
-    import base64
-    HAS_CRYPTO = True
-except ImportError:
-    HAS_CRYPTO = False
-
-def verify_hash(content, expected_hash):
-    """Verify SHA-256 hash of content"""
-    actual_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
-    return actual_hash == expected_hash
-
-def verify_signature_crypto(data_to_verify, signature_b64, public_key_pem):
-    """Verify RSA-SHA256 signature using cryptography library"""
-    try:
-        public_key = serialization.load_pem_public_key(
-            public_key_pem.encode('utf-8'),
-            backend=default_backend()
-        )
-        signature = base64.b64decode(signature_b64)
-        public_key.verify(
-            signature,
-            data_to_verify.encode('utf-8'),
-            padding.PKCS1v15(),
-            hashes.SHA256()
-        )
-        return True
-    except Exception as e:
-        print(f"Signature verification failed: {e}", file=sys.stderr)
-        return False
-
-def verify_signature_openssl(data_to_verify, signature_b64, public_key_pem):
-    """Fallback: Verify signature using openssl command"""
-    import subprocess
-    import tempfile
-    
-    try:
-        # Write public key to temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as f:
-            f.write(public_key_pem)
-            pubkey_file = f.name
-        
-        # Write signature to temp file
-        import base64
-        sig_bytes = base64.b64decode(signature_b64)
-        with tempfile.NamedTemporaryFile(mode='wb', suffix='.sig', delete=False) as f:
-            f.write(sig_bytes)
-            sig_file = f.name
-        
-        # Write data to temp file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            f.write(data_to_verify)
-            data_file = f.name
-        
-        # Verify with openssl
-        result = subprocess.run([
-            'openssl', 'dgst', '-sha256', '-verify', pubkey_file,
-            '-signature', sig_file, data_file
-        ], capture_output=True, text=True)
-        
-        # Cleanup temp files
-        os.unlink(pubkey_file)
-        os.unlink(sig_file)
-        os.unlink(data_file)
-        
-        return result.returncode == 0
-    except Exception as e:
-        print(f"OpenSSL verification failed: {e}", file=sys.stderr)
-        return False
-
-def main():
-    if len(sys.argv) != 2:
-        print("Usage: verify.py <response.json>", file=sys.stderr)
-        sys.exit(1)
-    
-    response_file = sys.argv[1]
-    
-    try:
-        with open(response_file, 'r') as f:
-            data = json.load(f)
-    except Exception as e:
-        print(f"Failed to read response file: {e}", file=sys.stderr)
-        sys.exit(1)
-    
-    # Check required fields
-    required = ['files', 'hashes', 'signature', 'publicKey']
-    for field in required:
-        if field not in data:
-            print(f"Missing required field: {field}", file=sys.stderr)
-            sys.exit(1)
-    
-    files = data['files']
-    hashes = data['hashes']
-    signature = data['signature']
-    public_key = data['publicKey']
-    
-    print("🔍 Verifying file hashes...")
-    
-    # Verify hashes for each file
-    for filename, content in files.items():
-        if filename not in hashes:
-            print(f"  ❌ No hash provided for {filename}", file=sys.stderr)
-            sys.exit(1)
-        
-        if not verify_hash(content, hashes[filename]):
-            print(f"  ❌ Hash mismatch for {filename}", file=sys.stderr)
-            sys.exit(1)
-        
-        print(f"  ✅ {filename} hash verified")
-    
-    print("🔐 Verifying cryptographic signature...")
-    
-    # Reconstruct signable data
-    signable_items = sorted(hashes.items(), key=lambda x: x[0])
-    signable_data = '\n'.join(f"{name}:{hash_val}" for name, hash_val in signable_items)
-    
-    # Try cryptography library first, fallback to openssl
-    if HAS_CRYPTO:
-        verified = verify_signature_crypto(signable_data, signature, public_key)
-    else:
-        print("  ℹ️  Using OpenSSL for signature verification")
-        verified = verify_signature_openssl(signable_data, signature, public_key)
-    
-    if not verified:
-        print("  ❌ SIGNATURE VERIFICATION FAILED!", file=sys.stderr)
-        print("  ⚠️  The source code may have been tampered with!", file=sys.stderr)
-        sys.exit(1)
-    
-    print("  ✅ Signature verified successfully")
-    
-    # Extract files to current directory
-    print("📦 Extracting verified source files...")
-    for filename, content in files.items():
-        with open(filename, 'w') as f:
-            f.write(content)
-        print(f"  ✅ Extracted {filename}")
-    
-    print("✅ All security checks passed!")
-    sys.exit(0)
-
-if __name__ == '__main__':
-    main()
-VERIFY_SCRIPT
-
-# Run verification
-chmod +x /tmp/maintainer-verify.py
-cd "$BUILD_DIR"
-if ! $PYTHON_CMD /tmp/maintainer-verify.py "$RESPONSE_FILE"; then
-    log "❌ SECURITY VERIFICATION FAILED!"
-    log "The update was rejected due to signature/hash verification failure."
-    log "This could indicate:"
-    log "  - Man-in-the-middle attack"
-    log "  - Corrupted download"
-    log "  - Server configuration issue"
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-log "✅ Security verification passed!"
-
-# Verify files were created by the verification script
-if [ ! -f "main.go" ] || [ ! -f "go.mod" ]; then
-    log "ERROR: Source files not extracted!"
-    ls -la
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-log "Source files verified and extracted:"
-ls -la
-
-# Build the binary
-log "Building new agent binary..."
-go mod tidy 2>&1 | tee -a "$LOG_FILE"
-go build -o "$NEW_BINARY" -ldflags="-s -w" . 2>&1 | tee -a "$LOG_FILE"
-
-if [ ! -f "$NEW_BINARY" ]; then
-    log "ERROR: Build failed!"
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-# Check if it's a valid binary
-if ! file "$NEW_BINARY" | grep -q "executable"; then
-    log "ERROR: Built file is not a valid executable!"
-    log "File type: $(file "$NEW_BINARY")"
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-log "Build successful!"
-ls -lh "$NEW_BINARY"
-
-# Backup old binary
-log "Backing up current binary..."
-cp "$CURRENT_BINARY" "${CURRENT_BINARY}.backup" 2>/dev/null || true
-
-# Replace binary
-log "Installing new binary..."
-chmod +x "$NEW_BINARY"
-mv "$NEW_BINARY" "$CURRENT_BINARY"
-chmod +x "$CURRENT_BINARY"
-
-# Verify installation
-if [ ! -x "$CURRENT_BINARY" ]; then
-    log "ERROR: Failed to install new binary, restoring backup..."
-    mv "${CURRENT_BINARY}.backup" "$CURRENT_BINARY" 2>/dev/null || true
-    cleanup_build
-    systemctl start maintainer-agent
-    exit 1
-fi
-
-# Start the service
-log "Starting maintainer-agent service..."
-systemctl start maintainer-agent
-
-# Wait and verify
-sleep 3
-if systemctl is-active --quiet maintainer-agent; then
-    log "✅ Update successful! Agent is running."
-    # Clean up backup after successful update
-    rm -f "${CURRENT_BINARY}.backup"
-else
-    log "❌ Service failed to start! Check logs with: journalctl -u maintainer-agent -n 50"
-    # Try to restore backup
-    if [ -f "${CURRENT_BINARY}.backup" ]; then
-        log "Restoring backup..."
-        mv "${CURRENT_BINARY}.backup" "$CURRENT_BINARY"
-        systemctl start maintainer-agent
-    fi
-    cleanup_build
-    exit 1
-fi
-
-# Cleanup
-log "Cleaning up build directory..."
-cleanup_build
-rm -f "$0"
-log "Update complete!"
-`, sourceURL, currentBinary)
+	// Create the update script using the platform-specific generator
+	updateScript := platform.Current.GenerateUpdateScript(binaryURL, currentBinary)
 
 	// Write the update script to a temporary file
-	scriptPath := "/tmp/maintainer-agent-update.sh"
+	var scriptPath string
+	if runtime.GOOS == "windows" {
+		scriptPath = filepath.Join(os.TempDir(), "maintainer-agent-update.ps1")
+	} else {
+		scriptPath = "/tmp/maintainer-agent-update.sh"
+	}
 	err = os.WriteFile(scriptPath, []byte(updateScript), 0755)
 	if err != nil {
 		sendOutput(fmt.Sprintf("Error: Could not create update script: %v\n", err), true, 1)
 		return
 	}
 
-	sendOutput("📝 Update script created at /tmp/maintainer-agent-update.sh\n", false, 0)
-	sendOutput("🚀 Launching update process (this agent will stop)...\n", false, 0)
-	sendOutput("📋 Update log will be at /tmp/maintainer-agent-update.log\n", false, 0)
+	sendOutput(fmt.Sprintf("Update script created at %s\n", scriptPath), false, 0)
+	sendOutput("Launching update process (this agent will stop)...\n", false, 0)
 
 	// Send completion before starting the update
-	sendOutput("✅ Update initiated successfully. Agent will reconnect shortly.\n", true, 0)
+	sendOutput("Update initiated successfully. Agent will reconnect shortly.\n", true, 0)
 
-	// Give time for the completion message to be sent
 	time.Sleep(500 * time.Millisecond)
 
-	// Launch the update script with nohup so it continues after this process dies
-	// Use setsid to create a new session, completely detaching from this process
-	cmd := exec.Command("setsid", "nohup", "/bin/bash", scriptPath)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Stdin = nil
-	
-	// Start the process in background
+	// Launch the update script in a detached process via platform-specific method
+	cmd := platform.Current.BackgroundExecCommand(scriptPath)
+
 	err = cmd.Start()
 	if err != nil {
 		log.Printf("Failed to start update script: %v", err)
 		return
 	}
 
-	// Don't wait for the process - let it run independently
-	// The script will stop this agent via systemctl
 	log.Printf("Update script launched with PID: %d", cmd.Process.Pid)
 
-	// Gracefully close the connection and exit
-	// The update script will handle stopping/starting the service
 	go func() {
 		time.Sleep(1 * time.Second)
 		log.Println("Agent shutting down for update...")
 		if a.conn != nil {
 			a.conn.Close()
 		}
-		os.Exit(0)
+		// Signal graceful shutdown instead of os.Exit — lets the Windows
+		// Service handler perform proper SCM shutdown.
+		select {
+		case <-a.shutdownCh:
+			// Already closed
+		default:
+			close(a.shutdownCh)
+		}
 	}()
 }
 
 func (a *Agent) spawnShell(data SpawnShellData) {
 	log.Printf("Spawning shell for session: %s", data.SessionID)
 
-	// Start a login shell so that full readline support is available
-	// (tab completion, arrow-key history, proper line editing).
-	// Bracketed paste mode is handled correctly by xterm.js on the client.
-	cmd := exec.Command("/bin/bash", "--login")
-	
-	// Set environment variables for proper terminal behavior
-	cmd.Env = append(os.Environ(), 
-		"TERM=xterm-256color",
-		"BASH_SILENCE_DEPRECATION_WARNING=1",
-		"LC_ALL=en_US.UTF-8",
-		"LANG=en_US.UTF-8",
-	)
-
-	// Start with PTY
-	ptmx, err := pty.Start(cmd)
+	// Use platform-specific terminal spawning (PTY on Linux, ConPTY/pipes on Windows)
+	term, err := platform.Current.SpawnTerminal()
 	if err != nil {
-		log.Printf("Failed to start PTY: %v", err)
+		log.Printf("Failed to spawn terminal: %v", err)
 		return
 	}
 
-	// Set PTY size
-	ws := &pty.Winsize{
-		Rows: 24,
-		Cols: 80,
-	}
-	if err := pty.Setsize(ptmx, ws); err != nil {
-		log.Printf("Failed to set PTY size: %v", err)
-	}
-
-	a.terminals[data.SessionID] = ptmx
+	a.terminals[data.SessionID] = term
 
 	// Read output and send to server
 	go func() {
 		defer func() {
 			delete(a.terminals, data.SessionID)
-			ptmx.Close()
+			term.Close()
 		}()
 
 		buf := make([]byte, 8192)
 		for {
-			n, err := ptmx.Read(buf)
+			n, err := term.Read(buf)
 			if err != nil {
 				if err != io.EOF {
-					log.Printf("PTY read error for session %s: %v", data.SessionID, err)
+					log.Printf("Terminal read error for session %s: %v", data.SessionID, err)
 				}
 				return
 			}
 
 			if n > 0 {
-				log.Printf("PTY output (%d bytes) for session %s: %q", n, data.SessionID, string(buf[:n]))
-				
+				log.Printf("Terminal output (%d bytes) for session %s: %q", n, data.SessionID, string(buf[:n]))
+
 				msg := TerminalOutputMessage{
 					Type:      "terminal_output",
 					SessionID: data.SessionID,
@@ -1832,18 +1410,18 @@ func (a *Agent) spawnShell(data SpawnShellData) {
 
 func (a *Agent) terminalStdin(data TerminalStdinData) {
 	log.Printf("Terminal stdin for session %s: %q", data.SessionID, data.Data)
-	
-	ptmx, ok := a.terminals[data.SessionID]
+
+	term, ok := a.terminals[data.SessionID]
 	if !ok {
 		log.Printf("Terminal session not found: %s (available: %v)", data.SessionID, a.getTerminalSessions())
 		return
 	}
 
-	n, err := ptmx.Write([]byte(data.Data))
+	n, err := term.Write([]byte(data.Data))
 	if err != nil {
-		log.Printf("Failed to write to PTY: %v", err)
+		log.Printf("Failed to write to terminal: %v", err)
 	} else {
-		log.Printf("Wrote %d bytes to PTY", n)
+		log.Printf("Wrote %d bytes to terminal", n)
 	}
 }
 
@@ -1856,17 +1434,11 @@ func (a *Agent) getTerminalSessions() []string {
 }
 
 func (a *Agent) terminalResize(data TerminalResizeData) {
-	ptmx, ok := a.terminals[data.SessionID]
+	term, ok := a.terminals[data.SessionID]
 	if !ok {
 		return
 	}
-
-	ws := &pty.Winsize{
-		Rows: uint16(data.Rows),
-		Cols: uint16(data.Cols),
-	}
-
-	pty.Setsize(ptmx, ws)
+	term.Resize(data.Cols, data.Rows)
 }
 
 func collectMetrics() Metrics {
@@ -1884,11 +1456,19 @@ func collectMetrics() Metrics {
 		metrics.RAMUsed = float64(vmStat.Used) / 1024 / 1024 / 1024   // GB
 	}
 
-	// Disk (root partition)
-	if diskStat, err := disk.Usage("/"); err == nil {
-		metrics.DiskUsage = diskStat.UsedPercent
-		metrics.DiskTotal = float64(diskStat.Total) / 1024 / 1024 / 1024 // GB
-		metrics.DiskUsed = float64(diskStat.Used) / 1024 / 1024 / 1024   // GB
+	// Disk - enumerate all partitions
+	metrics.Disks = collectDiskMetrics()
+	
+	// Aggregate disk stats for backward compatibility
+	var totalDiskTotal, totalDiskUsed float64
+	for _, d := range metrics.Disks {
+		totalDiskTotal += d.Total
+		totalDiskUsed += d.Used
+	}
+	if totalDiskTotal > 0 {
+		metrics.DiskTotal = totalDiskTotal
+		metrics.DiskUsed = totalDiskUsed
+		metrics.DiskUsage = (totalDiskUsed / totalDiskTotal) * 100
 	}
 
 	// Uptime
@@ -1899,374 +1479,45 @@ func collectMetrics() Metrics {
 	return metrics
 }
 
-func collectPackages() ([]PackageInfo, ScanSummary, error) {
-	if _, err := exec.LookPath("dpkg-query"); err == nil {
-		return collectDebPackages()
-	}
-
-	if _, err := exec.LookPath("rpm"); err == nil {
-		return collectRpmPackages()
-	}
-
-	return nil, ScanSummary{}, fmt.Errorf("no supported package manager found")
-}
-
-func collectDebPackages() ([]PackageInfo, ScanSummary, error) {
-	// First, update the package lists to get latest update information
-	// Run with timeout and ignore errors (may fail without sudo, but apt cache may still be fresh)
-	updateCmd := exec.Command("apt-get", "update", "-qq")
-	updateCmd.Run() // Ignore errors - might need sudo, but try anyway
+// collectDiskMetrics enumerates all mounted partitions and returns per-disk metrics
+func collectDiskMetrics() []DiskInfo {
+	var disks []DiskInfo
 	
-	cmd := exec.Command("dpkg-query", "-W", "-f=${Package} ${Version}\n")
-	output, err := cmd.Output()
+	partitions, err := disk.Partitions(false) // false = exclude virtual/pseudo filesystems
 	if err != nil {
-		return nil, ScanSummary{}, err
-	}
-
-	statusMap := make(map[string]string)
-	
-	// Try apt-get -s upgrade first
-	if upgradeOutput, err := exec.Command("apt-get", "-s", "upgrade").Output(); err == nil {
-		lines := strings.Split(string(upgradeOutput), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "Inst ") {
-				continue
-			}
-
-			parts := strings.Fields(line)
-			if len(parts) < 2 {
-				continue
-			}
-
-			status := "update_available"
-			// Check for security indicators in the line
-			lineLower := strings.ToLower(line)
-			if strings.Contains(lineLower, "security") || 
-			   strings.Contains(lineLower, "-security") ||
-			   strings.Contains(lineLower, "security.ubuntu") ||
-			   strings.Contains(lineLower, "security.debian") {
-				status = "security_update"
-			}
-			statusMap[parts[1]] = status
-		}
+		log.Printf("Failed to get disk partitions: %v", err)
+		return disks
 	}
 	
-	// Also check apt-get -s dist-upgrade for additional security updates
-	if distUpgradeOutput, err := exec.Command("apt-get", "-s", "dist-upgrade").Output(); err == nil {
-		lines := strings.Split(string(distUpgradeOutput), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if !strings.HasPrefix(line, "Inst ") {
-				continue
-			}
-
-			parts := strings.Fields(line)
-			if len(parts) < 2 {
-				continue
-			}
-			
-			pkgName := parts[1]
-			// Only add if not already tracked
-			if _, exists := statusMap[pkgName]; !exists {
-				status := "update_available"
-				lineLower := strings.ToLower(line)
-				if strings.Contains(lineLower, "security") || 
-				   strings.Contains(lineLower, "-security") ||
-				   strings.Contains(lineLower, "security.ubuntu") ||
-				   strings.Contains(lineLower, "security.debian") {
-					status = "security_update"
-				}
-				statusMap[pkgName] = status
-			} else if statusMap[pkgName] == "update_available" {
-				// Upgrade existing entry to security if this shows security
-				lineLower := strings.ToLower(line)
-				if strings.Contains(lineLower, "security") || 
-				   strings.Contains(lineLower, "-security") ||
-				   strings.Contains(lineLower, "security.ubuntu") ||
-				   strings.Contains(lineLower, "security.debian") {
-					statusMap[pkgName] = "security_update"
-				}
-			}
-		}
-	}
-
-	packages := []PackageInfo{}
-	summary := ScanSummary{}
-
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, partition := range partitions {
+		// Skip invalid mount points and pseudo filesystems
+		if partition.Mountpoint == "" {
 			continue
 		}
-
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-
-		status := statusMap[parts[0]]
-		if status == "" {
-			status = "installed"
-		} else {
-			summary.Updates++
-			if status == "security_update" {
-				summary.SecurityUpdates++
-			}
-		}
-
-		packages = append(packages, PackageInfo{
-			Name:    parts[0],
-			Version: parts[1],
-			Manager: "apt",
-			Status:  status,
-		})
-	}
-
-	summary.Total = len(packages)
-	return packages, summary, nil
-}
-
-func collectRpmPackages() ([]PackageInfo, ScanSummary, error) {
-	cmd := exec.Command("rpm", "-qa", "--queryformat", "%{NAME} %{VERSION}-%{RELEASE}\n")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, ScanSummary{}, err
-	}
-
-	packages := []PackageInfo{}
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-
-		packages = append(packages, PackageInfo{
-			Name:    parts[0],
-			Version: parts[1],
-			Manager: "rpm",
-			Status:  "installed",
-		})
-	}
-
-	summary := ScanSummary{
-		Total: len(packages),
-	}
-	return packages, summary, nil
-}
-
-func getOSInfo() OSInfo {
-	info := OSInfo{}
-
-	if hostInfo, err := host.Info(); err == nil {
-		info.Distro = hostInfo.Platform
-		info.Release = hostInfo.PlatformVersion
-		info.Kernel = hostInfo.KernelVersion
-	}
-
-	// Try to get better distro info from /etc/os-release
-	if data, err := os.ReadFile("/etc/os-release"); err == nil {
-		lines := strings.Split(string(data), "\n")
-		for _, line := range lines {
-			if strings.HasPrefix(line, "PRETTY_NAME=") {
-				info.Distro = strings.Trim(strings.TrimPrefix(line, "PRETTY_NAME="), "\"")
-			}
-		}
-	}
-
-	return info
-}
-
-func getOutboundIP() string {
-	// Try to get the actual outbound IP
-	if addresses, err := exec.Command("hostname", "-I").Output(); err == nil {
-		// Return first IP address
-		fields := strings.Fields(strings.TrimSpace(string(addresses)))
-		if len(fields) > 0 {
-			return fields[0]
-		}
-	}
-	
-	// Fallback to hostname
-	hostname, _ := os.Hostname()
-	return hostname
-}
-
-func collectPorts() []Port {
-	ports := []Port{}
-	
-	// Try ss command first (modern)
-	cmd := exec.Command("ss", "-tuln")
-	output, err := cmd.Output()
-	
-	if err != nil {
-		// Fallback to netstat
-		cmd = exec.Command("netstat", "-tuln")
-		output, err = cmd.Output()
+		
+		// Get usage stats for this partition
+		usageStat, err := disk.Usage(partition.Mountpoint)
 		if err != nil {
-			log.Printf("Failed to get ports: %v", err)
-			return ports
+			continue // Skip partitions we can't read
 		}
-	}
-	
-	lines := strings.Split(string(output), "\n")
-	seenPorts := make(map[string]bool)
-	
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "Netid") || strings.HasPrefix(line, "Proto") || strings.HasPrefix(line, "Active") {
+		
+		// Skip very small partitions (< 100MB) - likely boot/recovery partitions
+		if usageStat.Total < 100*1024*1024 {
 			continue
 		}
 		
-		fields := strings.Fields(line)
-		if len(fields) < 5 {
-			continue
-		}
-		
-		var proto, localAddr, state string
-		
-		// Parse ss output format
-		if fields[0] == "tcp" || fields[0] == "udp" {
-			proto = fields[0]
-			state = fields[1]
-			localAddr = fields[4]
-		} else if strings.HasPrefix(fields[0], "tcp") || strings.HasPrefix(fields[0], "udp") {
-			// netstat format
-			proto = fields[0]
-			if strings.Contains(proto, "6") {
-				proto = strings.Replace(proto, "6", "", 1)
-			}
-			localAddr = fields[3]
-			if len(fields) > 5 {
-				state = fields[5]
-			} else {
-				state = "LISTEN"
-			}
-		} else {
-			continue
-		}
-		
-		// Extract port from address (format: 0.0.0.0:80 or :::80 or *:80)
-		parts := strings.Split(localAddr, ":")
-		if len(parts) < 2 {
-			continue
-		}
-		portStr := parts[len(parts)-1]
-		
-		// Parse port number
-		var port int
-		_, err := fmt.Sscanf(portStr, "%d", &port)
-		if err != nil || port == 0 {
-			continue
-		}
-		
-		// Skip if we've seen this port/proto combo
-		key := fmt.Sprintf("%s:%d", proto, port)
-		if seenPorts[key] {
-			continue
-		}
-		seenPorts[key] = true
-		
-		// Try to get service name
-		service := getServiceName(port, proto)
-		
-		ports = append(ports, Port{
-			Port:    port,
-			Proto:   proto,
-			Service: service,
-			State:   state,
+		disks = append(disks, DiskInfo{
+			Path:  partition.Mountpoint,
+			Usage: usageStat.UsedPercent,
+			Total: float64(usageStat.Total) / 1024 / 1024 / 1024,
+			Used:  float64(usageStat.Used) / 1024 / 1024 / 1024,
 		})
 	}
 	
-	return ports
-}
-
-func getServiceName(port int, proto string) string {
-	// Common service mappings
-	services := map[int]string{
-		20:    "FTP Data",
-		21:    "FTP",
-		22:    "SSH",
-		23:    "Telnet",
-		25:    "SMTP",
-		53:    "DNS",
-		80:    "HTTP",
-		110:   "POP3",
-		143:   "IMAP",
-		443:   "HTTPS",
-		465:   "SMTPS",
-		587:   "SMTP (Submission)",
-		993:   "IMAPS",
-		995:   "POP3S",
-		3000:  "Node.js/Dev Server",
-		3306:  "MySQL",
-		5432:  "PostgreSQL",
-		6379:  "Redis",
-		8080:  "HTTP Alt",
-		8443:  "HTTPS Alt",
-		27017: "MongoDB",
-	}
-	
-	if name, ok := services[port]; ok {
-		return name
-	}
-	
-	// Try to get from /etc/services
-	cmd := exec.Command("getent", "services", fmt.Sprintf("%d/%s", port, proto))
-	output, err := cmd.Output()
-	if err == nil {
-		fields := strings.Fields(string(output))
-		if len(fields) > 0 {
-			return fields[0]
-		}
-	}
-	
-	return "Unknown"
+	return disks
 }
 
 // ==================== SECURITY MONITORING ====================
-
-// criticalFiles lists files to monitor for integrity changes
-var criticalFiles = []string{
-	"/etc/passwd",
-	"/etc/shadow",
-	"/etc/sudoers",
-	"/etc/ssh/sshd_config",
-	"/etc/hosts",
-	"/etc/crontab",
-	"/root/.ssh/authorized_keys",
-	"/etc/pam.d/sshd",
-	"/etc/security/access.conf",
-}
-
-var integrityRoots = []string{"/"}
-
-// directories that should be skipped to avoid infinite/procfs loops
-var integritySkipDirs = map[string]bool{
-	"/proc": true,
-	"/sys":  true,
-	"/dev":  true,
-	"/run":  true,
-	"/tmp":  true,
-}
-
-// configFiles lists configuration files to monitor for drift
-var configFiles = []string{
-	"/etc/ssh/sshd_config",
-	"/etc/sudoers",
-	"/etc/hosts.allow",
-	"/etc/hosts.deny",
-	"/etc/security/limits.conf",
-	"/etc/sysctl.conf",
-	"/etc/fstab",
-}
 
 // computeFileHash computes SHA256 hash of a file
 func computeFileHash(path string) (string, error) {
@@ -2287,6 +1538,10 @@ func computeFileHash(path string) (string, error) {
 func collectIntegrityPaths() []string {
 	var paths []string
 	seen := make(map[string]bool)
+
+	integrityRoots := platform.Current.IntegrityRoots()
+	integritySkipDirs := platform.Current.IntegritySkipDirs()
+	criticalFiles := platform.Current.CriticalFiles()
 
 	for _, root := range integrityRoots {
 		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -2321,7 +1576,7 @@ func collectIntegrityPaths() []string {
 		})
 	}
 
-	// Always include the legacy critical set to ensure they are monitored even if permissions block traversal
+	// Always include the critical set to ensure they are monitored even if permissions block traversal
 	for _, p := range criticalFiles {
 		if !seen[p] {
 			paths = append(paths, p)
@@ -2378,20 +1633,11 @@ func (a *Agent) checkFileIntegrity() []SecurityFinding {
 	return findings
 }
 
-// expectedConfigValues defines expected values for security-critical configs
-var expectedConfigValues = map[string]map[string]string{
-	"/etc/ssh/sshd_config": {
-		"PermitRootLogin":       "no",
-		"PasswordAuthentication": "no",
-		"PermitEmptyPasswords":   "no",
-	},
-}
-
 // checkConfigDrift checks for configuration drift from expected values
 func (a *Agent) checkConfigDrift() []SecurityFinding {
 	var findings []SecurityFinding
 
-	for filePath, expectedValues := range expectedConfigValues {
+	for filePath, expectedValues := range platform.Current.ConfigExpectations() {
 		content, err := os.ReadFile(filePath)
 		if err != nil {
 			continue
@@ -2476,21 +1722,3 @@ func (a *Agent) checkAuthLog() []SecurityEvent {
 	return events
 }
 
-// extractIP tries to extract an IP address from a log line
-func extractIP(line string) string {
-	// Common patterns: "from 192.168.1.1", "rhost=192.168.1.1"
-	patterns := []string{
-		`from (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`,
-		`rhost=(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`,
-		`(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`,
-	}
-
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
-		matches := re.FindStringSubmatch(line)
-		if len(matches) > 1 {
-			return matches[1]
-		}
-	}
-	return ""
-}
