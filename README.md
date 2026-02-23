@@ -59,6 +59,8 @@ All secrets (`POSTGRES_PASSWORD`, `JWT_SECRET`, `SESSION_TOKEN_SECRET`) are gene
 
 > **TrueNAS / Portainer / Unraid**: Just paste the `docker-compose.yml` content into your custom app YAML editor and deploy. The image is pulled automatically from `ghcr.io/timexx/controlsphere:latest`. Nothing else needed.
 
+> **Synology / QNAP / NAS with slow connections**: If `docker compose up` fails with a registry timeout, see the [NAS Deployment Guide](docs/deployment/NAS-DOCKER-GUIDE.md) for a pre-optimised local-build setup.
+
 **Useful Docker commands:**
 ```bash
 docker compose logs -f server       # follow server logs
@@ -103,11 +105,15 @@ docker compose -f deploy/docker-compose.small.yml up -d
 
 ### 🖥️ Option B — Native install (Debian/Ubuntu, RHEL, macOS, Alpine)
 
-One script. No prerequisites.
+One script — it installs everything automatically (Node.js, PostgreSQL, dependencies, database).
 
 ```bash
+git clone https://github.com/timexx/controlsphere.git
+cd controlsphere
 sudo ./setup-server.sh
 ```
+
+> **Important:** You must clone the full repository first. Running `setup-server.sh` alone will fail because it needs the `server/` directory and all source files.
 
 The script fully automates:
 - ✅ Node.js 20 LTS (installs or upgrades automatically)

@@ -284,7 +284,11 @@ else
     update_env() {
         local key="$1" value="$2" file=".env"
         if grep -qE "^${key}=" "$file"; then
-            sed -i.bak "s|^${key}=.*|${key}=${value}|" "$file" && rm -f "${file}.bak"
+            # Escape sed-special characters in replacement string:
+            # '\' must become '\\', '&' must become '\&'
+            local escaped_value="${value//\\/\\\\}"
+            escaped_value="${escaped_value//&/\\&}"
+            sed -i.bak "s|^${key}=.*|${key}=${escaped_value}|" "$file" && rm -f "${file}.bak"
         else
             echo "${key}=${value}" >> "$file"
         fi

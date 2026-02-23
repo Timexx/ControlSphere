@@ -1,3 +1,13 @@
+# ControlSphere — NAS-optimised Docker Compose
+# Builds locally instead of pulling from ghcr.io (avoids registry timeouts).
+# Based on the Micro profile (1–10 agents, 512 MB server RAM).
+#
+# Usage:
+#   docker compose -f docker-compose.nas.yml up -d
+#   docker compose -f docker-compose.nas.yml up -d --build   # rebuild after update
+#   docker compose -f docker-compose.nas.yml logs -f server   # follow logs
+#   docker compose -f docker-compose.nas.yml down              # stop
+
 services:
 
   # -- PostgreSQL ----------------------------------------------------------
@@ -19,11 +29,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    # Not exposed to the host — only reachable from the server container.
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          memory: 128M
+    command: >
+      postgres
+        -c shared_buffers=64MB
+        -c max_connections=20
 
   # -- Init: generate shared secrets once ----------------------------------
-  # Runs before postgres + server start. Creates the shared password file
-  # in the secrets volume if it doesn't exist yet.
   init-secrets:
     image: alpine:3.19
     entrypoint: /bin/sh
@@ -42,26 +60,22 @@ services:
     volumes:
       - secrets_data:/secrets
 
-  # -- ControlSphere Server (Next.js + WebSocket) -------------------------
+  # -- ControlSphere Server ------------------------------------------------
+  # Built locally from ./server — no registry pull needed.
   server:
-    image: ghcr.io/timexx/controlsphere:latest
-    # ── Local build (for NAS / slow connections / development) ────────────
-    # If pulling the image fails (e.g. registry timeout on Synology/QNAP),
-    # comment out 'image' above and uncomment the two lines below to build
-    # from source.  Or use docker-compose.nas.yml which does this by default.
-    # build:
-    #   context: ./server
-    #   dockerfile: Dockerfile
+    build:
+      context: ./server
+      dockerfile: Dockerfile
     restart: unless-stopped
     ports:
       - "${PORT:-3000}:3000"
     environment:
-      # All secrets are auto-generated — override via environment if needed.
       NODE_ENV: production
       PORT: 3000
-      # Override Docker's automatic HOSTNAME (container-ID) so the server
-      # binds to 0.0.0.0 and is reachable via the host port mapping.
       HOSTNAME: "0.0.0.0"
+      HEARTBEAT_METRICS_INTERVAL_MS: 30000
+      HEARTBEAT_PORTS_INTERVAL_MS: 120000
+      DB_CONNECTION_LIMIT: 10
     volumes:
       - secrets_data:/app/.secrets
       - agent_downloads:/app/public/downloads
@@ -70,6 +84,13 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          memory: 256M
 
 volumes:
   postgres_data:
