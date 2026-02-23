@@ -46,6 +46,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # (the real URL is injected at runtime via docker-compose)
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/build?schema=public"
 
+# Tell build-agents-if-needed.sh to skip (binaries built separately in agent-builder stage)
+ENV BUILDING_IN_DOCKER=true
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY server/ .
 

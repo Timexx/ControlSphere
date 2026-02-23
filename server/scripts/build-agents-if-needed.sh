@@ -5,6 +5,12 @@
 #   - Native: via npm prestart/predev hooks
 set -e
 
+# If we're building inside Docker (npm run build in Dockerfile),
+# skip this entirely - binaries will be copied from agent-builder stage
+if [ "$BUILDING_IN_DOCKER" = "true" ]; then
+  exit 0
+fi
+
 # Detect if we're in Docker or native environment
 if [ -d "/app" ] && [ -f "/.dockerenv" ]; then
   IS_DOCKER=true
