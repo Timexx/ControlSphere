@@ -210,6 +210,99 @@ install_nodejs() {
     fi
 }
 
+# Install Go automatically
+install_go() {
+    local os=$(detect_os)
+    echo -e "${BLUE}Detected OS: ${os}${NC}"
+    echo -e "${YELLOW}Installing Go 1.21+...${NC}"
+    
+    case $os in
+        macos)
+            if command -v brew &> /dev/null; then
+                echo -e "${BLUE}Using Homebrew to install Go...${NC}"
+                brew install go 2>/dev/null || true
+            else
+                echo -e "${YELLOW}Downloading Go for macOS...${NC}"
+                local arch=$(uname -m)
+                if [ "$arch" = "arm64" ]; then
+                    GO_TARBALL="go1.21.6.darwin-arm64.tar.gz"
+                else
+                    GO_TARBALL="go1.21.6.darwin-amd64.tar.gz"
+                fi
+                curl -L "https://go.dev/dl/$GO_TARBALL" -o "/tmp/$GO_TARBALL"
+                sudo tar -C /usr/local -xzf "/tmp/$GO_TARBALL"
+                rm "/tmp/$GO_TARBALL"
+                export PATH="/usr/local/go/bin:$PATH"
+                # Add to shell profile
+                if [ -f "$HOME/.zshrc" ]; then
+                    echo 'export PATH="/usr/local/go/bin:$PATH"' >> "$HOME/.zshrc"
+                elif [ -f "$HOME/.bash_profile" ]; then
+                    echo 'export PATH="/usr/local/go/bin:$PATH"' >> "$HOME/.bash_profile"
+                fi
+            fi
+            ;;
+        debian)
+            echo -e "${BLUE}Installing Go for Debian/Ubuntu...${NC}"
+            # Remove old Go
+            sudo rm -rf /usr/local/go
+            # Download and install
+            local arch=$(dpkg --print-architecture)
+            if [ "$arch" = "arm64" ]; then
+                GO_TARBALL="go1.21.6.linux-arm64.tar.gz"
+            else
+                GO_TARBALL="go1.21.6.linux-amd64.tar.gz"
+            fi
+            curl -L "https://go.dev/dl/$GO_TARBALL" -o "/tmp/$GO_TARBALL"
+            sudo tar -C /usr/local -xzf "/tmp/$GO_TARBALL"
+            rm "/tmp/$GO_TARBALL"
+            export PATH="/usr/local/go/bin:$PATH"
+            # Add to profile
+            if ! grep -q '/usr/local/go/bin' /etc/profile; then
+                echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee -a /etc/profile
+            fi
+            ;;
+        redhat)
+            echo -e "${BLUE}Installing Go for RHEL/CentOS/Fedora...${NC}"
+            # Remove old Go
+            sudo rm -rf /usr/local/go
+            # Download and install
+            local arch=$(uname -m)
+            if [ "$arch" = "aarch64" ]; then
+                GO_TARBALL="go1.21.6.linux-arm64.tar.gz"
+            else
+                GO_TARBALL="go1.21.6.linux-amd64.tar.gz"
+            fi
+            curl -L "https://go.dev/dl/$GO_TARBALL" -o "/tmp/$GO_TARBALL"
+            sudo tar -C /usr/local -xzf "/tmp/$GO_TARBALL"
+            rm "/tmp/$GO_TARBALL"
+            export PATH="/usr/local/go/bin:$PATH"
+            # Add to profile
+            if ! grep -q '/usr/local/go/bin' /etc/profile; then
+                echo 'export PATH=$PATH:/usr/local/go/bin' | sudo tee -a /etc/profile
+            fi
+            ;;
+        alpine)
+            echo -e "${BLUE}Using apk to install Go...${NC}"
+            sudo apk add --update go
+            ;;
+        *)
+            echo -e "${RED}Unknown operating system. Please install Go 1.21+ manually:${NC}"
+            echo -e "${YELLOW}  https://go.dev/doc/install${NC}"
+            return 1
+            ;;
+    esac
+    
+    # Verify installation
+    if command -v go &> /dev/null; then
+        echo -e "${GREEN}Go installed successfully!${NC}"
+        go version
+        return 0
+    else
+        echo -e "${RED}Go installation failed. Please install manually.${NC}"
+        return 1
+    fi
+}
+
 # Check minimum Node.js version (18+)
 check_node_version() {
     local node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
@@ -345,6 +438,40 @@ npm run prisma:generate
 echo -e "${GREEN}Running database migrations...${NC}"
 npx prisma migrate deploy
 
+# ── Check if Go or Docker is available for agent builds ────────────────────
+echo ""
+echo -e "${BLUE}Checking build tools for agent binaries...${NC}"
+
+HAS_DOCKER=false
+HAS_GO=false
+
+command -v docker &> /dev/null && HAS_DOCKER=true
+command -v go &> /dev/null && HAS_GO=true
+
+if [ "$HAS_DOCKER" = "true" ]; then
+    echo -e "${GREEN}Docker found ✓ - will use for cross-compilation${NC}"
+elif [ "$HAS_GO" = "true" ]; then
+    echo -e "${GREEN}Go $(go version | awk '{print $3}') found ✓${NC}"
+else
+    echo -e "${YELLOW}Neither Docker nor Go found.${NC}"
+    echo -e "${YELLOW}Agent binaries cannot be built without one of them.${NC}"
+    echo -e "${BLUE}Installing Go automatically...${NC}"
+    echo ""
+    
+    if install_go; then
+        echo -e "${GREEN}Go installation successful! ✓${NC}"
+    else
+        echo -e "${YELLOW}⚠️  Warning: Go installation failed.${NC}"
+        echo -e "${YELLOW}Agent installation will fail for all clients.${NC}"
+        echo -e "${YELLOW}Please install Docker or Go manually:${NC}"
+        echo -e "  - Docker: https://docs.docker.com/install${NC}"
+        echo -e "  - Go: https://go.dev/doc/install${NC}"
+        echo ""
+        echo -e "${BLUE}Continuing with server setup...${NC}"
+    fi
+fi
+
+echo ""
 echo -e "${GREEN}Building production server...${NC}"
 npm run build
 
