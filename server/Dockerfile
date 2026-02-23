@@ -84,8 +84,8 @@ COPY --from=builder /app/next.config.js ./next.config.js
 # Copy pre-compiled agent binaries from agent-builder stage
 COPY --from=agent-builder /src/bin/ ./public/downloads/
 
-COPY server/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-COPY server/scripts/ ./scripts/
+COPY --from=builder /app/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY --from=builder /app/scripts/ ./scripts/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
     chmod +x ./scripts/*.sh 2>/dev/null || true
 
