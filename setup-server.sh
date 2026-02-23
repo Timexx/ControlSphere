@@ -345,14 +345,150 @@ npm run prisma:generate
 echo -e "${GREEN}Running database migrations...${NC}"
 npx prisma migrate deploy
 
+echo -e "${GREEN}Building production server...${NC}"
+npm run build
+
+# ── Create system service (systemd / launchd) ──────────────────────────────
+echo ""
+echo -e "${BLUE}Setting up system service...${NC}"
+
+# Determine the user who should run the service (not root)
+if [ "$SUDO_USER" ]; then
+    SERVICE_USER="$SUDO_USER"
+else
+    SERVICE_USER="$(whoami)"
+fi
+
+# Get absolute paths
+SERVER_DIR="$(cd "$(dirname "$0")/server" && pwd)"
+NPM_PATH="$(which npm)"
+NODE_PATH="$(which node)"
+
+# Detect OS and server IP
+OS_TYPE=$(detect_os)
+SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || ipconfig getifaddr en0 2>/dev/null || echo "localhost")
+
+if [ "$OS_TYPE" = "macos" ]; then
+    # ── macOS: launchd service ──────────────────────────────────────────────
+    PLIST_FILE="$HOME/Library/LaunchAgents/com.controlsphere.server.plist"
+    mkdir -p "$HOME/Library/LaunchAgents"
+    
+    cat > "$PLIST_FILE" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.controlsphere.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$NPM_PATH</string>
+        <string>start</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$SERVER_DIR</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>HOSTNAME</key>
+        <string>0.0.0.0</string>
+        <key>PORT</key>
+        <string>3000</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>$HOME/Library/Logs/controlsphere-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/Library/Logs/controlsphere-stderr.log</string>
+</dict>
+</plist>
+EOF
+    
+    launchctl unload "$PLIST_FILE" 2>/dev/null || true
+    launchctl load "$PLIST_FILE"
+    sleep 2
+    
+    if launchctl list | grep -q com.controlsphere.server; then
+        echo -e "${GREEN}Service started successfully ✓${NC}"
+    else
+        echo -e "${YELLOW}Service may still be starting...${NC}"
+    fi
+    
+    SERVICE_CMD_STATUS="launchctl list | grep controlsphere"
+    SERVICE_CMD_RESTART="launchctl unload $PLIST_FILE && launchctl load $PLIST_FILE"
+    SERVICE_CMD_STOP="launchctl unload $PLIST_FILE"
+    SERVICE_CMD_LOGS="tail -f $HOME/Library/Logs/controlsphere-stderr.log"
+    
+else
+    # ── Linux: systemd service ──────────────────────────────────────────────
+    sudo tee /etc/systemd/system/controlsphere.service > /dev/null <<EOF
+[Unit]
+Description=ControlSphere Server
+Documentation=https://github.com/timexx/controlsphere
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$SERVER_DIR
+Environment="NODE_ENV=production"
+Environment="HOSTNAME=0.0.0.0"
+Environment="PORT=3000"
+ExecStart=$NPM_PATH start
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=controlsphere
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=$SERVER_DIR
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable controlsphere.service
+    sudo systemctl start controlsphere.service
+    sleep 2
+    
+    if sudo systemctl is-active --quiet controlsphere.service; then
+        echo -e "${GREEN}Service started successfully ✓${NC}"
+    else
+        echo -e "${YELLOW}Service may still be starting... Check status with:${NC}"
+        echo -e "  sudo systemctl status controlsphere"
+    fi
+    
+    SERVICE_CMD_STATUS="sudo systemctl status controlsphere"
+    SERVICE_CMD_RESTART="sudo systemctl restart controlsphere"
+    SERVICE_CMD_STOP="sudo systemctl stop controlsphere"
+    SERVICE_CMD_LOGS="sudo journalctl -u controlsphere -f"
+fi
+
 echo ""
 echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  Setup Complete! ✓${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo -e "Start the server with:"
-echo -e "${YELLOW}  cd server && npm run dev${NC}"
+echo -e "${GREEN}ControlSphere is now running as a system service.${NC}"
 echo ""
 echo -e "Access the dashboard at:"
 echo -e "${YELLOW}  http://localhost:3000${NC}"
+echo -e "${YELLOW}  http://$SERVER_IP:3000${NC}"
+echo ""
+echo -e "Useful commands:"
+echo -e "  ${BLUE}$SERVICE_CMD_STATUS${NC}   # check service status"
+echo -e "  ${BLUE}$SERVICE_CMD_RESTART${NC}  # restart service"
+echo -e "  ${BLUE}$SERVICE_CMD_STOP${NC}     # stop service"
+echo -e "  ${BLUE}$SERVICE_CMD_LOGS${NC}   # view live logs"
 echo ""

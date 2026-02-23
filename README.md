@@ -105,7 +105,7 @@ docker compose -f deploy/docker-compose.small.yml up -d
 
 ### 🖥️ Option B — Native install (Debian/Ubuntu, RHEL, macOS, Alpine)
 
-One script — it installs everything automatically (Node.js, PostgreSQL, dependencies, database).
+One script — fully automated setup including systemd service.
 
 ```bash
 git clone https://github.com/timexx/controlsphere.git
@@ -113,24 +113,25 @@ cd controlsphere
 sudo ./setup-server.sh
 ```
 
+The script automatically:
+- ✅ Installs Node.js 20 LTS and PostgreSQL (if missing)
+- ✅ Creates database user, database, and secure credentials
+- ✅ Generates `JWT_SECRET` and `SESSION_TOKEN_SECRET`
+- ✅ Installs dependencies and runs database migrations
+- ✅ Builds the production server
+- ✅ **Creates and starts a systemd service** — server runs immediately and starts on boot
+
+After setup completes, the server is **already running** at `http://your-server-ip:3000`.
+
 > **Important:** You must clone the full repository first. Running `setup-server.sh` alone will fail because it needs the `server/` directory and all source files.
 
-The script fully automates:
-- ✅ Node.js 20 LTS (installs or upgrades automatically)
-- ✅ PostgreSQL (installs if missing)
-- ✅ Database user, database, and password (auto-generated)
-- ✅ `JWT_SECRET` and `SESSION_TOKEN_SECRET` (generated via `openssl rand`)
-- ✅ `server/.env` configured — nothing to edit manually
-- ✅ npm dependencies, Prisma client, and database migrations
-
-Then start the server:
+**Manage the service:**
 ```bash
-cd server && npm run dev          # development
-# — or —
-cd server && npm run build && npm start   # production
+sudo systemctl status controlsphere    # check status
+sudo systemctl restart controlsphere   # restart
+sudo systemctl stop controlsphere      # stop
+sudo journalctl -u controlsphere -f    # view logs
 ```
-
-Server runs at **http://localhost:3000**.
 
 ---
 
