@@ -168,6 +168,79 @@ export class AgentConnectionManager {
         timestamp: data.timestamp
       })
     })
+
+    // Start periodic cleanup for stale connections
+    // If agents haven't sent heartbeats in 30 seconds, mark them as offline
+    this.startStaleConnectionCleanup()
+  }
+
+  /**
+   * Periodically check for stale agent connections and mark them offline
+   * This handles cases where WebSocket close event doesn't fire (hard shutdown, network timeout)
+   */
+  private startStaleConnectionCleanup(): void {
+    const CLEANUP_INTERVAL_MS = parseInterval(process.env.STALE_CONNECTION_CLEANUP_INTERVAL_MS, 15000) // 15 seconds
+    const STALE_THRESHOLD_MS = parseInterval(process.env.STALE_CONNECTION_THRESHOLD_MS, 30000) // 30 seconds
+
+    setInterval(async () => {
+      try {
+        const staleThreshold = new Date(Date.now() - STALE_THRESHOLD_MS)
+        
+        // Find all machines marked as online but haven't sent heartbeat recently
+        const staleMachines = await this.prisma.machine.findMany({
+          where: {
+            status: 'online',
+            lastSeen: {
+              lt: staleThreshold
+            }
+          },
+          select: {
+            id: true,
+            hostname: true,
+            lastSeen: true
+          }
+        })
+
+        if (staleMachines.length > 0) {
+          this.logger.info('StaleConnectionsDetected', { 
+            count: staleMachines.length,
+            machines: staleMachines.map(m => ({ id: m.id, hostname: m.hostname, lastSeen: m.lastSeen }))
+          })
+
+          // Mark each stale machine as offline
+          for (const machine of staleMachines) {
+            await this.prisma.machine.update({
+              where: { id: machine.id },
+              data: { status: 'offline' }
+            })
+
+            // Update state cache
+            stateCache.setOffline(machine.id)
+
+            // Broadcast status change
+            this.broadcast({
+              type: 'machine_status_changed',
+              machineId: machine.id,
+              status: 'offline'
+            })
+
+            this.logger.info('MachineMarkedOffline', {
+              machineId: machine.id,
+              hostname: machine.hostname,
+              reason: 'stale_connection',
+              lastSeen: machine.lastSeen
+            })
+          }
+        }
+      } catch (error) {
+        this.logger.error('StaleConnectionCleanupFailed', { error: (error as Error).message })
+      }
+    }, CLEANUP_INTERVAL_MS)
+
+    this.logger.info('StaleConnectionCleanupStarted', {
+      cleanupInterval: CLEANUP_INTERVAL_MS,
+      staleThreshold: STALE_THRESHOLD_MS
+    })
   }
 
   /**
