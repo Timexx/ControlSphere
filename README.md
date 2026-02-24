@@ -136,6 +136,7 @@ sudo journalctl -u controlsphere -f    # view logs
 **Update the system:**
 ```bash
 cd /path/to/controlsphere
+chmod +x update-system.sh  # Make executable (only needed once)
 ./update-system.sh
 ```
 
