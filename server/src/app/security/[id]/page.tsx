@@ -30,6 +30,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { de, enUS } from 'date-fns/locale'
 import type { Locale } from 'date-fns'
 import { cn } from '@/lib/utils'
+import { lookupPort, riskBadgeColors, type PortLookupResult } from '@/lib/well-known-ports'
 
 type SecurityEvent = {
   id: string
@@ -1171,12 +1172,18 @@ export default function VMSecurityDetailPage() {
                     <th className="text-left py-2 px-3 font-semibold w-24">{t('labels.port')}</th>
                     <th className="text-left py-2 px-3 font-semibold w-32">{t('labels.protocol')}</th>
                     <th className="text-left py-2 px-3 font-semibold">{t('labels.service')}</th>
+                    <th className="text-left py-2 px-3 font-semibold">{t('labels.description')}</th>
+                    <th className="text-left py-2 px-3 font-semibold w-24">{t('portIdentification.risk')}</th>
                     <th className="text-left py-2 px-3 font-semibold w-32">{t('labels.state')}</th>
                     <th className="text-left py-2 px-3 font-semibold w-40">{t('labels.timestamp')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ports.map((port) => (
+                  {ports.map((port) => {
+                    const info: PortLookupResult | null = lookupPort(port.port, port.proto, port.service)
+                    const isGuess = info?.confidence === 'guess'
+                    const isIdentified = info?.confidence === 'identified'
+                    return (
                     <tr key={port.id} className="border-b border-slate-800 hover:bg-slate-900/60 text-slate-200">
                       <td className="py-2 px-3 font-mono">{port.port}</td>
                       <td className="py-2 px-3">
@@ -1189,7 +1196,40 @@ export default function VMSecurityDetailPage() {
                           {port.proto.toUpperCase()}
                         </span>
                       </td>
-                      <td className="py-2 px-3 text-slate-200">{port.service}</td>
+                      <td className="py-2 px-3">
+                        <div className="flex items-center gap-2">
+                          <span className={cn(
+                            "text-slate-200",
+                            isGuess && "italic text-slate-300",
+                            isIdentified && "text-cyan-200"
+                          )}>
+                            {info ? info.name : port.service}
+                          </span>
+                          {isGuess && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium border bg-amber-500/10 text-amber-300 border-amber-400/30" title={t('portIdentification.guessTooltip')}>
+                              {t('portIdentification.guess')}
+                            </span>
+                          )}
+                          {isIdentified && (
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-medium border bg-cyan-500/10 text-cyan-300 border-cyan-400/30" title={t('portIdentification.identifiedTooltip')}>
+                              {t('portIdentification.identified')}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2 px-3 text-slate-400 text-xs max-w-[240px] truncate" title={info?.description ?? ''}>
+                        {info?.description ?? '–'}
+                      </td>
+                      <td className="py-2 px-3">
+                        {info?.risk && (
+                          <span className={cn(
+                            "px-2 py-1 rounded text-xs font-medium border",
+                            riskBadgeColors(info.risk)
+                          )}>
+                            {t(`portIdentification.riskLevel.${info.risk}`)}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2 px-3">
                         <span className="px-2 py-1 bg-emerald-500/10 text-emerald-100 border border-emerald-400/30 rounded text-xs font-medium">
                           {port.state}
@@ -1199,7 +1239,8 @@ export default function VMSecurityDetailPage() {
                         {formatDistanceToNow(new Date(port.lastSeen), { addSuffix: true, locale: dateLocale })}
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

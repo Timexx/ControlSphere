@@ -611,6 +611,20 @@ const messages = {
       pathsScanned: 'Directories scanned for CVEs',
       pathsScannedEmpty: 'No scan paths were reported by the agent.'
     },
+    portIdentification: {
+      guess: 'Guess',
+      identified: 'Known',
+      guessTooltip: 'This service was guessed based on the port number – it may be a different service.',
+      identifiedTooltip: 'This is a well-known IANA-assigned port for this service.',
+      risk: 'Risk',
+      riskLevel: {
+        info: 'Info',
+        low: 'Low',
+        medium: 'Medium',
+        high: 'High',
+        critical: 'Critical'
+      }
+    },
     severity: {
       critical: 'Critical',
       high: 'High',
