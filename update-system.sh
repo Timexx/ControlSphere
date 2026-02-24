@@ -21,11 +21,15 @@ INSTALL_DIR="$SCRIPT_DIR"
 echo -e "${BLUE}Working directory: ${INSTALL_DIR}${NC}"
 cd "$INSTALL_DIR"
 
-# Verify this is a git repository
+# Ensure this is a git repository (handle installs via archive/scp)
+REPO_URL="https://github.com/timexx/controlsphere.git"
 if [ ! -d ".git" ]; then
-    echo -e "${RED}✗ $INSTALL_DIR is not a git repository!${NC}"
-    echo -e "${YELLOW}Please run this script from inside your controlsphere installation.${NC}"
-    exit 1
+    echo -e "${YELLOW}⚠ No .git directory found – initialising repository...${NC}"
+    git init -b main
+    git remote add origin "$REPO_URL"
+    # Perform an initial fetch so we have a valid origin/main ref
+    git fetch origin main
+    echo -e "${GREEN}✓ Git repository initialised${NC}"
 fi
 
 # ── Step 1: Stop services & free port ──────────────────────────────────────
@@ -56,8 +60,12 @@ echo -e "${BLUE}[2/5] Updating repository (in-place)...${NC}"
 # Stash any local changes (e.g. .env modifications) so git pull works
 git stash --include-untracked 2>/dev/null || true
 
-# Always fetch from HTTPS (public read-only, no auth needed)
-REPO_URL="https://github.com/timexx/controlsphere.git"
+# Ensure remote points to the correct URL
+if git remote get-url origin &>/dev/null; then
+    git remote set-url origin "$REPO_URL"
+else
+    git remote add origin "$REPO_URL"
+fi
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
 
 echo -e "${YELLOW}Fetching updates from ${REPO_URL}...${NC}"
