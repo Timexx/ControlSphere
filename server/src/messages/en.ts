@@ -488,6 +488,7 @@ const messages = {
       subtitle: 'Uses OSV data and installed ecosystems to keep vulnerability definitions current.',
       automatic: 'Automatic trigger: every 2 hours after the server starts (scoped to detected package ecosystems).',
       manual: 'Manual trigger: run an immediate sync to refresh CVE data now.',
+      beta: 'Beta Phase: This system is still in development and may potentially miss some security vulnerabilities.',
       button: 'Run CVE sync now',
       buttonLoading: 'Syncing...',
       state: 'Status: {status} • Last sync: {lastSync}',
@@ -499,7 +500,33 @@ const messages = {
       },
       viewMirror: 'View CVE mirror',
       mode: 'Mode: {mode}',
-      coverage: 'Ecosystems: {count} • CVEs: {total}'
+      coverage: 'Ecosystems: {count} • CVEs: {total}',
+      infoButton: 'CVE source information'
+    },
+    cveInfoDialog: {
+      title: 'CVE Data Sources',
+      subtitle: 'Information about the CVE sources and ecosystems used',
+      source: {
+        title: 'Data Source',
+        description: 'CVE data is sourced from the Open Source Vulnerabilities (OSV) database, a comprehensive source for security vulnerabilities in open-source software.',
+        api: {
+          label: 'OSV Batch API'
+        },
+        storage: {
+          label: 'Google Cloud Storage'
+        }
+      },
+      ecosystems: {
+        title: 'Supported Ecosystems'
+      },
+      updateCycle: {
+        title: 'Update Cycle',
+        description: 'The server automatically synchronizes the CVE database every 24 hours. You can also manually trigger a synchronization to get the latest security information.'
+      },
+      note: {
+        title: 'Note:',
+        description: 'All CVE data is stored centrally on the server and matched against the installed packages on your systems. This ensures consistent and trustworthy vulnerability detection.'
+      }
     },
     cveDialog: {
       title: 'CVE Mirror',
@@ -722,8 +749,8 @@ const messages = {
           lowPaths: '*.log, /var/log/, /tmp/, /var/cache/, Docker overlay layers, PM2 logs, letsencrypt logs',
           lowPathsWindows: '*.log, Windows\\Temp\\, Users\\*\\AppData\\Local\\Temp\\, Windows\\Logs\\',
           ignored: 'IGNORED — Completely filtered',
-          ignoredPaths: '/var/lib/docker/containers/, /var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/',
-          ignoredPathsWindows: 'Windows\\WinSxS\\, Windows\\SoftwareDistribution\\, $Recycle.Bin\\, System Volume Information\\',
+          ignoredPaths: 'PostgreSQL (pg_wal/, pg_xact/, base/), MySQL (*.ibd, ib_logfile*), Redis (/var/lib/redis/), Next.js (/.next/static/, /.next/cache/), Node.js (node_modules/.cache/, .npm/, .yarn/), Docker (/var/lib/docker/containers/), Package caches (/var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/), PM2 logs, *.log files',
+          ignoredPathsWindows: 'Windows\\WinSxS\\, Windows\\SoftwareDistribution\\, $Recycle.Bin\\, System Volume Information\\, Next.js (.next\\static\\, .next\\cache\\), Node.js (node_modules\\.cache\\, .npm\\, .yarn\\), *.log files',
           filterNote: 'The default view hides LOW events. Use the filter buttons to show all events if needed.'
         }
       }

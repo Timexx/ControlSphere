@@ -488,6 +488,7 @@ const messages = {
       subtitle: 'Nutzt OSV-Daten und erkannte Paket-Ökosysteme, um Schwachstellen aktuell zu halten.',
       automatic: 'Automatischer Trigger: alle 2 Stunden nach Serverstart (auf erkannte Paket-Ökosysteme begrenzt).',
       manual: 'Manueller Trigger: sofortiges Sync anstoßen, um CVE-Daten jetzt zu aktualisieren.',
+      beta: 'Beta-Phase: Das System befindet sich noch in der Entwicklung und kann möglicherweise einige Sicherheitslücken übersehen.',
       button: 'CVE-Sync jetzt starten',
       buttonLoading: 'Sync läuft...',
       state: 'Status: {status} • Letzter Sync: {lastSync}',
@@ -499,7 +500,33 @@ const messages = {
       },
       viewMirror: 'CVE-Mirror ansehen',
       mode: 'Modus: {mode}',
-      coverage: 'Ökosysteme: {count} • CVEs: {total}'
+      coverage: 'Ökosysteme: {count} • CVEs: {total}',
+      infoButton: 'Informationen zu CVE-Quellen'
+    },
+    cveInfoDialog: {
+      title: 'CVE-Datenquellen',
+      subtitle: 'Informationen über die verwendeten CVE-Quellen und -Ökosysteme',
+      source: {
+        title: 'Datenquelle',
+        description: 'CVE-Daten werden von der Open Source Vulnerabilities (OSV) Datenbank bezogen, einer umfassenden Quelle für Sicherheitslücken in Open-Source-Software.',
+        api: {
+          label: 'OSV Batch API'
+        },
+        storage: {
+          label: 'Google Cloud Storage'
+        }
+      },
+      ecosystems: {
+        title: 'Unterstützte Ökosysteme'
+      },
+      updateCycle: {
+        title: 'Aktualisierungszyklus',
+        description: 'Der Server synchronisiert die CVE-Datenbank automatisch alle 24 Stunden. Sie können auch manuell eine Synchronisierung anstoßen, um die neuesten Sicherheitsinformationen zu erhalten.'
+      },
+      note: {
+        title: 'Hinweis:',
+        description: 'Alle CVE-Daten werden zentral auf dem Server gespeichert und mit den installierten Paketen Ihrer Systeme abgeglichen. Dies gewährleistet eine konsistente und vertrauenswürdige Schwachstellenerkennung.'
+      }
     },
     cveDialog: {
       title: 'CVE Mirror',
@@ -722,8 +749,8 @@ const messages = {
           lowPaths: '*.log, /var/log/, /tmp/, /var/cache/, Docker-Overlay-Layer, PM2-Logs, Letsencrypt-Logs',
           lowPathsWindows: '*.log, Windows\\Temp\\, Users\\*\\AppData\\Local\\Temp\\, Windows\\Logs\\',
           ignored: 'IGNORIERT — Vollständig gefiltert',
-          ignoredPaths: '/var/lib/docker/containers/, /var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/',
-          ignoredPathsWindows: 'Windows\\WinSxS\\, Windows\\SoftwareDistribution\\, $Recycle.Bin\\, System Volume Information\\',
+          ignoredPaths: 'PostgreSQL (pg_wal/, pg_xact/, base/), MySQL (*.ibd, ib_logfile*), Redis (/var/lib/redis/), Next.js (/.next/static/, /.next/cache/), Node.js (node_modules/.cache/, .npm/, .yarn/), Docker (/var/lib/docker/containers/), Paket-Caches (/var/lib/apt/, /var/lib/dpkg/, /var/cache/apt/), PM2-Logs, *.log-Dateien',
+          ignoredPathsWindows: 'Windows\\WinSxS\\, Windows\\SoftwareDistribution\\, $Recycle.Bin\\, System Volume Information\\, Next.js (.next\\static\\, .next\\cache\\), Node.js (node_modules\\.cache\\, .npm\\, .yarn\\), *.log-Dateien',
           filterNote: 'Die Standardansicht blendet LOW-Events aus. Nutze die Filter-Buttons, um bei Bedarf alle Events anzuzeigen.'
         }
       }

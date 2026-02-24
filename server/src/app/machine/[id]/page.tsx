@@ -544,7 +544,12 @@ export default function MachinePage() {
                            cmd.startsWith('shutdown ') ||
                            cmd.includes('systemctl reboot') ||
                            cmd.includes('systemctl poweroff') ||
-                           cmd.includes('init 6')
+                           cmd.includes('init 6') ||
+                           // Windows reboot/shutdown commands
+                           cmd.includes('shutdown /r') ||
+                           cmd.includes('shutdown /s') ||
+                           cmd.includes('restart-computer') ||
+                           cmd.includes('stop-computer')
     
     if (isRebootCommand) {
       setRebooting(true)

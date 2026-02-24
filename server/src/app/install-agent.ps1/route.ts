@@ -141,6 +141,22 @@ try {
     exit 1
 }
 
+# ---------- Add Windows Defender Exclusions ----------
+Write-Host "Configuring Windows Defender exclusions..." -ForegroundColor Green
+try {
+    # Add process exclusion for the agent executable
+    Add-MpPreference -ExclusionProcess "$BinPath" -ErrorAction SilentlyContinue
+    
+    # Add path exclusion for the installation directory
+    Add-MpPreference -ExclusionPath "$InstallDir" -ErrorAction SilentlyContinue
+    
+    Write-Host "  ✓ Agent added to Windows Defender exclusion list" -ForegroundColor Gray
+} catch {
+    Write-Host "  ⚠ Could not add Defender exclusions (may require additional permissions): $_" -ForegroundColor Yellow
+    Write-Host "  You can add manually: Add-MpPreference -ExclusionPath '$InstallDir'" -ForegroundColor Gray
+}
+Write-Host ""
+
 # ---------- Install Windows Service ----------
 Write-Host "Installing Windows Service..." -ForegroundColor Green
 

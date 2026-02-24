@@ -185,6 +185,16 @@ $arch = if ([Environment]::Is64BitOperatingSystem) { "amd64" } else { "amd64" }
 $downloadUrl = "http://${serverUrl}/api/agent-download?os=windows&arch=$arch"
 Invoke-WebRequest -Uri $downloadUrl -OutFile $BinPath -UseBasicParsing
 
+# Add Windows Defender exclusions
+Write-Host "Configuring Windows Defender exclusions..." -ForegroundColor Green
+try {
+    Add-MpPreference -ExclusionProcess "$BinPath" -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionPath "$InstallDir" -ErrorAction SilentlyContinue
+    Write-Host "  ✓ Agent added to Windows Defender exclusion list" -ForegroundColor Gray
+} catch {
+    Write-Host "  ⚠ Could not add Defender exclusions" -ForegroundColor Yellow
+}
+
 # Install and start Windows Service
 Write-Host "Installing Windows Service..." -ForegroundColor Green
 & $BinPath -install -config $ConfigPath

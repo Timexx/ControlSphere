@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
 import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
 import { classifyIntegritySeverity } from '@/lib/integrity-severity'
+import { shouldIgnoreIntegrityEvent, extractPathFromMessage } from '@/lib/integrity-filters'
 
 function hashSecretKey(secret: string) {
   return crypto.createHash('sha256').update(secret).digest('hex')
@@ -43,37 +44,7 @@ interface SecurityEventInput {
   data?: Record<string, unknown>
 }
 
-const INTEGRITY_IGNORE_PATTERNS = [
-  // Linux
-  /^\/var\/log\/journal\/.*/i,
-  /^\/var\/lib\/docker\/containers\/.*/i,
-  /^\/var\/lib\/docker\/overlay2\/.*/i,
-  /^\/var\/cache\/apt\/.*/i,
-  /^\/var\/lib\/apt\/.*/i,
-  /^\/var\/lib\/dpkg\/.*/i,
-  /^\/var\/tmp\/.*/i,
-  // Windows
-  /^[A-Z]:\\Windows\\WinSxS\\.*/i,
-  /^[A-Z]:\\Windows\\SoftwareDistribution\\.*/i,
-  /^[A-Z]:\\Windows\\Temp\\.*/i,
-  /^[A-Z]:\\\$Recycle\.Bin\\.*/i,
-  /^[A-Z]:\\System Volume Information\\.*/i,
-  /^[A-Z]:\\Windows\\Prefetch\\.*/i,
-  /^[A-Z]:\\Windows\\Logs\\.*/i
-]
-
 const INTEGRITY_COOLDOWN_MS = 30 * 60 * 1000 // 30 minutes to avoid log churn during scans
-
-function extractPathFromMessage(message: string | undefined) {
-  if (!message) return undefined
-  const match = message.match(/File (?:modified|changed):\s*(\S+)/i)
-  return match?.[1]
-}
-
-function shouldIgnoreIntegrityEvent(path?: string) {
-  if (!path) return false
-  return INTEGRITY_IGNORE_PATTERNS.some((re) => re.test(path))
-}
 
 export async function POST(request: NextRequest) {
   try {

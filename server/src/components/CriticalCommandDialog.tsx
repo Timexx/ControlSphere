@@ -5,7 +5,7 @@ import { X, AlertTriangle, Lock, Eye, EyeOff } from 'lucide-react'
 
 // Liste kritischer Befehle die Passwort-Bestätigung erfordern
 export const CRITICAL_COMMANDS = [
-  // System
+  // System (Linux)
   'reboot',
   'shutdown',
   'poweroff',
@@ -15,6 +15,14 @@ export const CRITICAL_COMMANDS = [
   'systemctl reboot',
   'systemctl poweroff',
   'systemctl halt',
+  // System (Windows)
+  'shutdown /r',
+  'shutdown /s',
+  'Restart-Computer',
+  'Stop-Computer',
+  'Format-Volume',
+  'Clear-Disk',
+  'Remove-Partition',
   // Destruktive Befehle
   'rm -rf',
   'rm -fr',
@@ -51,7 +59,8 @@ export function isCriticalCommand(command: string): boolean {
   const lowerCmd = command.toLowerCase().trim()
   
   // Spezielle Patterns die genauer geprüft werden müssen
-  const exactMatches = ['reboot', 'shutdown', 'poweroff', 'halt', 'init 0', 'init 6']
+  const exactMatches = ['reboot', 'shutdown', 'poweroff', 'halt', 'init 0', 'init 6',
+    'restart-computer', 'stop-computer']
   const prefixMatches = [
     'rm -rf', 'rm -fr', 'rm -r ', 'rm -r;', 'rm --recursive',
     'rm -Rf', 'rm -fR', 'rm -R ',
@@ -59,6 +68,7 @@ export function isCriticalCommand(command: string): boolean {
     '> /dev/', 'chmod -R 000', 'chmod -R 777', 'chown -R',
     'systemctl reboot', 'systemctl poweroff', 'systemctl halt',
     'systemctl disable', 'systemctl mask',
+    'shutdown /r', 'shutdown /s', 'format-volume', 'clear-disk', 'remove-partition',
     'iptables -F', 'iptables --flush', 'ufw disable',
     'firewall-cmd --panic-on',
     'apt purge', 'apt remove --purge', 'apt autoremove --purge',
@@ -105,7 +115,8 @@ export function getCriticalReason(command: string): string {
   
   if (lowerCmd.includes('reboot') || lowerCmd.includes('shutdown') || 
       lowerCmd.includes('poweroff') || lowerCmd.includes('halt') ||
-      lowerCmd.includes('init 0') || lowerCmd.includes('init 6')) {
+      lowerCmd.includes('init 0') || lowerCmd.includes('init 6') ||
+      lowerCmd.includes('restart-computer') || lowerCmd.includes('stop-computer')) {
     return 'System-Neustart/Herunterfahren'
   }
   if (lowerCmd.includes('rm -rf') || lowerCmd.includes('rm -fr')) {

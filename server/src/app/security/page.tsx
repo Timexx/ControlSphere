@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { useTranslations, useLocale } from 'next-intl'
-import { ShieldAlert, ShieldCheck, ShieldHalf, Server, Clock } from 'lucide-react'
+import { ShieldAlert, ShieldCheck, ShieldHalf, Server, Clock, Info } from 'lucide-react'
 import { type Locale } from 'date-fns'
 import { de, enUS } from 'date-fns/locale'
 import AppShell from '@/components/AppShell'
@@ -35,6 +35,7 @@ export default function SecurityOverviewPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [cveDialogOpen, setCveDialogOpen] = useState(false)
+  const [cveInfoDialogOpen, setCveInfoDialogOpen] = useState(false)
   const [cveList, setCveList] = useState<any[]>([])
   const [cveListLoading, setCveListLoading] = useState(false)
   const [cveSearch, setCveSearch] = useState('')
@@ -209,60 +210,105 @@ export default function SecurityOverviewPage() {
           </div>
         </div>
 
-        <div className="rounded-xl border border-slate-800 bg-[#0B1118]/70 p-4 shadow-[0_0_30px_rgba(0,243,255,0.06)]">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="rounded-xl border border-slate-800 bg-[#0B1118]/70 shadow-[0_0_30px_rgba(0,243,255,0.06)] overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800/50">
             <div className="space-y-1">
               <div className="text-[11px] uppercase tracking-[0.22em] text-slate-400 font-mono">
                 {t('cveSync.eyebrow')}
               </div>
-              <div className="text-white font-semibold text-lg">{t('cveSync.title')}</div>
-              <p className="text-sm text-slate-300">
-                {t('cveSync.subtitle')}
-              </p>
-              <p className="text-xs text-slate-400">
-                {t('cveSync.automatic')}
-              </p>
-              <p className="text-xs text-slate-400">
-                {t('cveSync.manual')}
-              </p>
-              <p className="text-xs text-slate-400">
-                {t('cveSync.mode', { mode: cveState.mode === 'scoped' ? 'scoped' : 'full' })}
-              </p>
-              <p className="text-xs text-slate-400">
-                {t('cveSync.coverage', {
-                  count: cveState.ecosystems?.length ?? 0,
-                  total: cveState.totalCves ?? '—'
-                })}
-              </p>
-            </div>
-            <div className="flex flex-col items-start md:items-end gap-2 min-w-[240px]">
-              <div className="text-xs text-slate-300">
-                {t('cveSync.state', {
-                  status: cveState.status,
-                  lastSync: cveState.lastSync ? formatDistanceToNow(new Date(cveState.lastSync), { addSuffix: true, locale: dateLocale }) : t('cveSync.stateUnknown')
-                })}
+              <div className="flex items-center gap-2">
+                <h3 className="text-white font-semibold text-lg">{t('cveSync.title')}</h3>
+                <button
+                  onClick={() => setCveInfoDialogOpen(true)}
+                  className="h-7 w-7 rounded-lg border border-slate-700 text-slate-400 hover:text-cyan-300 hover:border-cyan-500/50 hover:bg-cyan-500/5 transition-all flex items-center justify-center"
+                  title={t('cveSync.infoButton')}
+                >
+                  <Info className="h-4 w-4" />
+                </button>
               </div>
-              {cveState.error && (
-                <div className="text-xs text-rose-300">{cveState.error}</div>
-              )}
-              {syncMessage && (
-                <div className="text-xs text-cyan-300">{syncMessage}</div>
-              )}
+            </div>
+            <div className="flex items-center gap-2">
               <button
                 onClick={triggerCveSync}
                 disabled={syncing}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 h-10 rounded-lg border border-cyan-500/50 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors disabled:opacity-60"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 h-9 rounded-lg border border-cyan-500/50 bg-cyan-500/10 text-cyan-200 hover:bg-cyan-500/20 transition-colors disabled:opacity-60 text-sm font-medium"
               >
                 <ShieldAlert className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
                 <span>{syncing ? t('cveSync.buttonLoading') : t('cveSync.button')}</span>
               </button>
               <button
                 onClick={() => { setCveDialogOpen(true); loadCveList() }}
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 h-10 rounded-lg border border-slate-700 bg-[#0d141d] text-slate-200 hover:border-cyan-500/60 transition-colors"
+                className="inline-flex items-center justify-center gap-2 px-4 py-2 h-9 rounded-lg border border-slate-700 bg-[#0d141d] text-slate-200 hover:border-cyan-500/60 hover:bg-slate-800/50 transition-colors text-sm font-medium"
               >
                 <ShieldAlert className="h-4 w-4" />
                 <span>{t('cveSync.viewMirror')}</span>
               </button>
+            </div>
+          </div>
+          
+          {/* Content */}
+          <div className="px-6 py-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Left Column - Description & Info */}
+              <div className="space-y-3">
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  {t('cveSync.subtitle')}
+                </p>
+                <div className="space-y-1.5">
+                  <p className="text-xs text-slate-400 flex items-start gap-2">
+                    <span className="text-cyan-400 mt-0.5">•</span>
+                    <span>{t('cveSync.automatic')}</span>
+                  </p>
+                  <p className="text-xs text-slate-400 flex items-start gap-2">
+                    <span className="text-cyan-400 mt-0.5">•</span>
+                    <span>{t('cveSync.manual')}</span>
+                  </p>
+                  <p className="text-xs text-amber-400/80 flex items-start gap-2">
+                    <span className="text-amber-400 mt-0.5">⚠</span>
+                    <span>{t('cveSync.beta')}</span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Right Column - Status & Coverage */}
+              <div className="space-y-3">
+                <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-4 py-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</span>
+                    <span className="text-xs text-slate-300">
+                      {cveState.lastSync ? formatDistanceToNow(new Date(cveState.lastSync), { addSuffix: true, locale: dateLocale }) : t('cveSync.stateUnknown')}
+                    </span>
+                  </div>
+                  {cveState.error && (
+                    <div className="text-xs text-rose-300 flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+                      {cveState.error}
+                    </div>
+                  )}
+                  {syncMessage && (
+                    <div className="text-xs text-cyan-300 flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                      {syncMessage}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3 text-xs">
+                  <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/40">
+                    <span className="text-slate-400">Mode:</span>
+                    <span className="text-slate-200 font-medium">{cveState.mode === 'scoped' ? 'Scoped' : 'Full'}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/40">
+                    <span className="text-slate-400">Ecosystems:</span>
+                    <span className="text-cyan-300 font-semibold">{cveState.ecosystems?.length ?? 0}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-800 bg-slate-900/40">
+                    <span className="text-slate-400">CVEs:</span>
+                    <span className="text-cyan-300 font-semibold">{cveState.totalCves ?? '—'}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -282,6 +328,78 @@ export default function SecurityOverviewPage() {
 
       {showAddModal && (
         <AddAgentModal onClose={() => setShowAddModal(false)} />
+      )}
+
+      {cveInfoDialogOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0A0F16] border border-slate-700 rounded-xl max-w-2xl w-full max-h-[80vh] overflow-hidden shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b border-slate-700">
+              <div className="flex items-center gap-2 text-cyan-200">
+                <Info className="h-5 w-5" />
+                <div>
+                  <h2 className="text-lg font-semibold">{t('cveInfoDialog.title')}</h2>
+                  <p className="text-xs text-slate-400">{t('cveInfoDialog.subtitle')}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCveInfoDialogOpen(false)}
+                className="h-8 w-8 rounded-lg border border-slate-600 text-slate-400 hover:text-white hover:bg-slate-700 transition-colors flex items-center justify-center"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="p-6 overflow-auto max-h-[calc(80vh-4rem)] space-y-4">
+              <div className="space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-cyan-200 mb-2">{t('cveInfoDialog.source.title')}</h3>
+                  <p className="text-sm text-slate-300">{t('cveInfoDialog.source.description')}</p>
+                </div>
+                
+                <div className="rounded-lg border border-slate-800 bg-[#0C121A]/70 p-4 space-y-2">
+                  <div>
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t('cveInfoDialog.source.api.label')}</p>
+                    <a 
+                      href="https://api.osv.dev/v1/querybatch" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-sm text-cyan-300 hover:text-cyan-100 font-mono break-all"
+                    >
+                      https://api.osv.dev/v1/querybatch
+                    </a>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t('cveInfoDialog.source.storage.label')}</p>
+                    <code className="text-xs text-slate-300 font-mono break-all block mt-1">
+                      gs://osv-vulnerabilities
+                    </code>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-cyan-200 mb-2">{t('cveInfoDialog.ecosystems.title')}</h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {['Debian', 'Alpine', 'npm', 'PyPI', 'Maven', 'NuGet', 'Go', 'crates.io', 'Packagist', 'RubyGems', 'Homebrew', 'OSS-Fuzz'].map((eco) => (
+                      <span key={eco} className="px-2 py-1 rounded-md border border-slate-700 bg-slate-800/60 text-xs text-slate-300">
+                        {eco}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-cyan-200 mb-2">{t('cveInfoDialog.updateCycle.title')}</h3>
+                  <p className="text-sm text-slate-300">{t('cveInfoDialog.updateCycle.description')}</p>
+                </div>
+
+                <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3">
+                  <p className="text-xs text-cyan-200">
+                    <strong>{t('cveInfoDialog.note.title')}</strong> {t('cveInfoDialog.note.description')}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {cveDialogOpen && (

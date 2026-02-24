@@ -132,10 +132,21 @@ func (p *WindowsPlatform) ShellCommand() []string {
 }
 
 func (p *WindowsPlatform) BackgroundExecCommand(scriptPath string) *exec.Cmd {
-	// Use PowerShell to run the update script in a completely detached process
+	// Use WMI Win32_Process.Create to launch the update script fully detached
+	// from the service process tree. This is the most reliable method because:
+	//   - Child processes via exec.Command are tied to the service job object
+	//   - schtasks /TR has quoting issues with paths containing spaces/quotes
+	//   - WMI Process.Create spawns a truly independent process under SYSTEM
 	shell := pickWindowsShell()
-	cmd := exec.Command(shell, "-WindowStyle", "Hidden", "-NoProfile",
-		"-ExecutionPolicy", "Bypass", "-File", scriptPath)
+
+	// WMI Create() takes a single CommandLine string. The spawned process
+	// runs outside the service job object, so it survives service shutdown.
+	wmiCommand := fmt.Sprintf(
+		`$proc = ([wmiclass]'Win32_Process').Create('%s -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%s"'); if ($proc.ReturnValue -ne 0) { exit 1 }`,
+		shell, scriptPath,
+	)
+
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", wmiCommand)
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	cmd.Stdin = nil
@@ -642,36 +653,52 @@ func (p *WindowsPlatform) CheckAuthLogIncremental(failedLoginCounts map[string]i
 
 func (p *WindowsPlatform) GenerateUpdateScript(binaryURL, currentBinary string) string {
 	return fmt.Sprintf(`# Maintainer Agent Self-Update Script (Windows)
-$ErrorActionPreference = "Stop"
+# IMPORTANT: ErrorActionPreference must be Continue, not Stop!
+# The script must survive non-critical errors (e.g. Defender exclusions)
+$ErrorActionPreference = "Continue"
 
 $BinaryURL = "%s"
 $CurrentBinary = "%s"
-$LogFile = "$env:TEMP\maintainer-agent-update.log"
+$LogFile = "$env:ProgramData\maintainer-agent\update.log"
 $NewBinary = "$env:TEMP\maintainer-agent-new.exe"
 
 function Write-Log($msg) {
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "[$ts] $msg" | Tee-Object -FilePath $LogFile -Append
+    $line = "[$ts] $msg"
+    try { $line | Out-File -FilePath $LogFile -Append -Encoding utf8 } catch {}
+    Write-Host $line
 }
 
 Write-Log "Maintainer Agent Update Started"
 Write-Log "Binary URL: $BinaryURL"
 Write-Log "Current binary: $CurrentBinary"
+Write-Log "Running as: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+Write-Log "PID: $PID"
 
-# Wait for agent to disconnect
-Start-Sleep -Seconds 3
-
-# Stop the service
-Write-Log "Stopping MaintainerAgent service..."
-$svc = Get-Service -Name MaintainerAgent -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -eq 'Running') {
-    Stop-Service MaintainerAgent -Force
-    Start-Sleep -Seconds 2
+# Wait for the agent to shut itself down gracefully.
+# DO NOT call Stop-Service here! The agent already initiated its own
+# shutdown. Calling Stop-Service from a child process causes a deadlock
+# because the SCM waits for child processes to exit before completing
+# the stop.
+Write-Log "Waiting for agent to shut down gracefully..."
+$waited = 0
+while ($waited -lt 15) {
+    $proc = Get-Process -Name maintainer-agent -ErrorAction SilentlyContinue
+    if (-not $proc) {
+        Write-Log "Agent process exited after $waited seconds"
+        break
+    }
+    Start-Sleep -Seconds 1
+    $waited++
 }
 
-# Kill any stray process
-Get-Process -Name maintainer-agent -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 1
+# If still running after 15s, force kill as last resort
+$proc = Get-Process -Name maintainer-agent -ErrorAction SilentlyContinue
+if ($proc) {
+    Write-Log "WARNING: Agent still running after 15s, force killing..."
+    $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+}
 
 # Download new binary
 Write-Log "Downloading new binary from $BinaryURL..."
@@ -721,28 +748,59 @@ try {
     exit 1
 }
 
+# Add Windows Defender exclusions (best effort, don't fail on this)
+Write-Log "Configuring Windows Defender exclusions..."
+$InstallDir = Split-Path -Parent $CurrentBinary
+try {
+    Add-MpPreference -ExclusionProcess $CurrentBinary -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionPath $InstallDir -ErrorAction SilentlyContinue
+    Write-Log "Windows Defender exclusions configured"
+} catch {
+    Write-Log "NOTE: Could not set Defender exclusions (non-critical): $($_.Exception.Message)"
+}
+
 # Start the service
 Write-Log "Starting MaintainerAgent service..."
-Start-Service MaintainerAgent
+try {
+    Start-Service MaintainerAgent -ErrorAction Stop
+} catch {
+    Write-Log "ERROR: Failed to start service: $($_.Exception.Message)"
+    Write-Log "Retrying in 3 seconds..."
+    Start-Sleep -Seconds 3
+    try {
+        Start-Service MaintainerAgent -ErrorAction Stop
+    } catch {
+        Write-Log "ERROR: Retry also failed: $($_.Exception.Message)"
+    }
+}
 
 # Wait and verify service started
-Start-Sleep -Seconds 3
-$svc = Get-Service -Name MaintainerAgent -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -eq 'Running') {
+$started = $false
+for ($i = 0; $i -lt 10; $i++) {
+    Start-Sleep -Seconds 1
+    $svc = Get-Service -Name MaintainerAgent -ErrorAction SilentlyContinue
+    if ($svc -and $svc.Status -eq 'Running') {
+        $started = $true
+        break
+    }
+}
+
+if ($started) {
     Write-Log "✅ Update successful! Service is running."
-    # Remove backup after successful update
     Remove-Item "${CurrentBinary}.backup" -Force -ErrorAction SilentlyContinue
 } else {
-    Write-Log "⚠️ Service failed to start, restoring backup..."
+    $svcStatus = if ($svc) { $svc.Status } else { 'NOT FOUND' }
+    Write-Log "⚠️ Service not running (status: $svcStatus), restoring backup..."
     if (Test-Path "${CurrentBinary}.backup") {
-        Copy-Item "${CurrentBinary}.backup" $CurrentBinary -Force
+        Copy-Item "${CurrentBinary}.backup" $CurrentBinary -Force -ErrorAction SilentlyContinue
         Start-Service MaintainerAgent -ErrorAction SilentlyContinue
-        Write-Log "Backup restored and service started"
+        Write-Log "Backup restored and service restarted"
     }
 }
 
 # Cleanup temporary files
 Remove-Item $NewBinary -Force -ErrorAction SilentlyContinue
+
 Write-Log "Update process complete!"
 `, binaryURL, currentBinary)
 }

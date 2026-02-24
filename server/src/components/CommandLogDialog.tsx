@@ -55,9 +55,15 @@ export default function CommandLogDialog({
             setLogs(prev => prev + data.output)
           }
           
-          if (data.completed || data.exitCode !== undefined) {
-            setIsRunning(prev => data.completed ? false : prev)
-            setExitCode(prev => data.exitCode ?? prev)
+          // For agent updates: only mark complete on explicit completed=true,
+          // ignore intermediate exitCode values (they are always 0 for status messages)
+          if (data.completed) {
+            setIsRunning(false)
+            setExitCode(data.exitCode ?? 0)
+          } else if (!isAgentUpdate && data.exitCode !== undefined && data.exitCode !== 0) {
+            // For non-update commands, a non-zero exit code in a stream message 
+            // can indicate completion
+            setExitCode(data.exitCode)
           }
         }
 
@@ -79,8 +85,26 @@ export default function CommandLogDialog({
 
     socket.addEventListener('message', handleMessage)
     
+    // Safety timeout for agent updates: if no response after 90 seconds, 
+    // show a helpful message instead of spinning forever
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+    if (isAgentUpdate) {
+      timeoutId = setTimeout(() => {
+        setLogs(prev => prev + '\n\n⚠️ Timeout: Der Agent hat sich nicht innerhalb von 90 Sekunden zurückgemeldet.\n' +
+          'Mögliche Ursachen:\n' +
+          '  - Windows Defender blockiert den neuen Agent\n' +
+          '  - Das Update-Script ist fehlgeschlagen\n' +
+          '\nPrüfe auf dem System:\n' +
+          '  Get-Content C:\\ProgramData\\maintainer-agent\\update.log\n' +
+          '  Get-Service MaintainerAgent\n')
+        setIsRunning(false)
+        setExitCode(prev => prev ?? -1)
+      }, 90000)
+    }
+
     return () => {
       socket.removeEventListener('message', handleMessage)
+      if (timeoutId) clearTimeout(timeoutId)
     }
   }, [socket, machineId, commandId, command])
 
@@ -114,9 +138,6 @@ export default function CommandLogDialog({
       return 'Wird ausgeführt...'
     }
     if (exitCode === 0) {
-      if (isAgentUpdateCommand()) {
-        return 'Agent Update erfolgreich!'
-      }
       return 'Erfolgreich abgeschlossen'
     }
     if (exitCode === -1 && isSystemCommand()) {
@@ -134,7 +155,12 @@ export default function CommandLogDialog({
            cmd.startsWith('shutdown ') ||
            cmd.includes('systemctl reboot') ||
            cmd.includes('systemctl poweroff') ||
-           cmd.includes('init 6')
+           cmd.includes('init 6') ||
+           // Windows reboot/shutdown commands
+           cmd.includes('shutdown /r') ||
+           cmd.includes('shutdown /s') ||
+           cmd.includes('restart-computer') ||
+           cmd.includes('stop-computer')
   }
   
   const isAgentUpdateCommand = () => {

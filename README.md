@@ -133,6 +133,19 @@ sudo systemctl stop controlsphere      # stop
 sudo journalctl -u controlsphere -f    # view logs
 ```
 
+**Update the system:**
+```bash
+cd /path/to/controlsphere
+./update-system.sh
+```
+
+The update script automatically:
+- ✅ Clones or pulls the latest version from GitHub
+- ✅ Creates a backup of your current installation
+- ✅ Deletes old agent binaries (from bin/ and download/ directories)
+- ✅ Runs `setup-server.sh` to update the server
+- ✅ Rebuilds all agent binaries automatically
+
 ---
 
 ### 🤖 Adding systems (agents)

@@ -1117,9 +1117,30 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 		Timestamp: time.Now(),
 	})
 
+	// Cross-platform command translation
+	// Translate common Linux commands to Windows equivalents and vice versa
+	actualCommand := data.Command
+	if runtime.GOOS == "windows" {
+		cmdMapping := map[string]string{
+			"reboot":            "shutdown /r /t 0",
+			"shutdown -r now":   "shutdown /r /t 0",
+			"shutdown -h now":   "shutdown /s /t 0",
+			"shutdown now":      "shutdown /s /t 0",
+			"poweroff":          "shutdown /s /t 0",
+			"systemctl reboot":  "shutdown /r /t 0",
+			"systemctl poweroff": "shutdown /s /t 0",
+			"init 6":            "shutdown /r /t 0",
+			"init 0":            "shutdown /s /t 0",
+		}
+		if mapped, ok := cmdMapping[strings.TrimSpace(actualCommand)]; ok {
+			log.Printf("Translated Linux command '%s' -> Windows command '%s'", actualCommand, mapped)
+			actualCommand = mapped
+		}
+	}
+
 	// Check if this is a system command (reboot, shutdown, etc.)
 	isSystemCommand := false
-	lowerCmd := strings.ToLower(strings.TrimSpace(data.Command))
+	lowerCmd := strings.ToLower(strings.TrimSpace(actualCommand))
 
 	for _, dangerous := range platform.Current.DangerousCommands() {
 		if lowerCmd == strings.ToLower(dangerous) || strings.Contains(lowerCmd, strings.ToLower(dangerous)) {
@@ -1145,7 +1166,7 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 
 	// For system commands, send immediate response and kick off in background
 	if isSystemCommand {
-		outputMsg := "System command initiated. The system will reboot shortly.\n"
+		outputMsg := fmt.Sprintf("System command initiated: %s\nThe system will reboot shortly.\n", actualCommand)
 
 		sendOutput(outputMsg, false, 0)
 		sendOutput("", true, -1)
@@ -1153,7 +1174,7 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 		go func() {
 			time.Sleep(1 * time.Second)
 			shellArgs := platform.Current.ShellCommand()
-			cmd := exec.Command(shellArgs[0], append(shellArgs[1:], data.Command)...)
+			cmd := exec.Command(shellArgs[0], append(shellArgs[1:], actualCommand)...)
 			cmd.Run()
 		}()
 		return
@@ -1161,7 +1182,7 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 
 	// Execute command via platform shell and capture output via pipes
 	shellArgs := platform.Current.ShellCommand()
-	cmd := exec.Command(shellArgs[0], append(shellArgs[1:], data.Command)...)
+	cmd := exec.Command(shellArgs[0], append(shellArgs[1:], actualCommand)...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -1328,21 +1349,22 @@ func (a *Agent) updateAgent(data UpdateAgentData) {
 	sendOutput(fmt.Sprintf("Update script created at %s\n", scriptPath), false, 0)
 	sendOutput("Launching update process (this agent will stop)...\n", false, 0)
 
-	// Send completion before starting the update
-	sendOutput("Update initiated successfully. Agent will reconnect shortly.\n", true, 0)
-
-	time.Sleep(500 * time.Millisecond)
-
 	// Launch the update script in a detached process via platform-specific method
+	// NOTE: Do NOT send completed=true here! The update has not finished yet.
+	// The UI should wait for the agent to reconnect (machine_status_changed → online).
 	cmd := platform.Current.BackgroundExecCommand(scriptPath)
 
 	err = cmd.Start()
 	if err != nil {
-		log.Printf("Failed to start update script: %v", err)
+		sendOutput(fmt.Sprintf("Error: Failed to start update process: %v\n", err), true, 1)
 		return
 	}
 
 	log.Printf("Update script launched with PID: %d", cmd.Process.Pid)
+
+	// Now send the last status message — NOT completed, just informational.
+	// The UI will mark it complete when the agent reconnects.
+	sendOutput("Update gestartet. Agent wird sich nach dem Update automatisch neu verbinden...\n", false, 0)
 
 	go func() {
 		time.Sleep(1 * time.Second)
