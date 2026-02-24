@@ -68,15 +68,15 @@ git stash pop 2>/dev/null || true
 echo ""
 echo -e "${BLUE}[3/5] Cleaning old agent binaries...${NC}"
 if [ -d "agent/bin" ]; then
-    rm -f agent/bin/maintainer-agent*
+    sudo rm -f agent/bin/maintainer-agent* 2>/dev/null || rm -f agent/bin/maintainer-agent* 2>/dev/null || true
     echo -e "${GREEN}✓ Old binaries deleted from agent/bin${NC}"
 fi
 if [ -d "server/public/downloads" ]; then
-    rm -f server/public/downloads/maintainer-agent*
+    sudo rm -f server/public/downloads/maintainer-agent* 2>/dev/null || true
     echo -e "${GREEN}✓ Old binaries deleted from downloads directory${NC}"
 fi
 if [ -d "server/public/download" ]; then
-    rm -f server/public/download/maintainer-agent*
+    sudo rm -f server/public/download/maintainer-agent* 2>/dev/null || true
     echo -e "${GREEN}✓ Old binaries deleted from download directory${NC}"
 fi
 
