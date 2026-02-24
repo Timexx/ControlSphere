@@ -56,8 +56,15 @@ echo -e "${BLUE}[2/5] Updating repository (in-place)...${NC}"
 # Stash any local changes (e.g. .env modifications) so git pull works
 git stash --include-untracked 2>/dev/null || true
 
-git fetch origin
+# Always fetch from HTTPS (public read-only, no auth needed)
+REPO_URL="https://github.com/timexx/controlsphere.git"
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+
+echo -e "${YELLOW}Fetching updates from ${REPO_URL}...${NC}"
+git fetch "$REPO_URL" "${BRANCH}:refs/remotes/origin/${BRANCH}" 2>/dev/null || \
+    git fetch "$REPO_URL" "main:refs/remotes/origin/main" 2>/dev/null || \
+    git fetch origin
+
 git reset --hard "origin/${BRANCH}"
 echo -e "${GREEN}✓ Repository updated to latest origin/${BRANCH}${NC}"
 
