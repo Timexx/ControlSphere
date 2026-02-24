@@ -13,110 +13,119 @@ echo -e "${GREEN}  ControlSphere System Update${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
 
-# Repository URL
-REPO_URL="https://github.com/timexx/controlsphere.git"
-INSTALL_DIR="${HOME}/controlsphere"
-BACKUP_DIR="${HOME}/controlsphere-backup-$(date +%Y%m%d-%H%M%S)"
+# ── Detect the directory where THIS script lives ──
+# This ensures we always update in-place, no matter where we run from
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+INSTALL_DIR="$SCRIPT_DIR"
 
-# Check if already in controlsphere directory
-if [[ $(basename "$PWD") == "controlsphere" ]] || [[ $(basename $(dirname "$PWD")) == "controlsphere" ]]; then
-    echo -e "${YELLOW}⚠️  You are already in the controlsphere directory.${NC}"
-    echo -e "${YELLOW}Update will be performed in the parent directory.${NC}"
-    cd "$HOME"
+echo -e "${BLUE}Working directory: ${INSTALL_DIR}${NC}"
+cd "$INSTALL_DIR"
+
+# Verify this is a git repository
+if [ ! -d ".git" ]; then
+    echo -e "${RED}✗ $INSTALL_DIR is not a git repository!${NC}"
+    echo -e "${YELLOW}Please run this script from inside your controlsphere installation.${NC}"
+    exit 1
 fi
 
-# Step 1: Clone or Update Repository
-echo -e "${BLUE}[1/5] Updating repository...${NC}"
-if [ -d "$INSTALL_DIR" ]; then
-    echo -e "${YELLOW}Directory already exists. Creating backup...${NC}"
-    
-    # Backup current installation
-    cp -r "$INSTALL_DIR" "$BACKUP_DIR"
-    echo -e "${GREEN}✓ Backup created: $BACKUP_DIR${NC}"
-    
-    # Update existing repository
-    cd "$INSTALL_DIR"
-    echo "Updating repository..."
-    git fetch origin
-    git reset --hard origin/main || git reset --hard origin/master
-    git pull
-    echo -e "${GREEN}✓ Repository updated${NC}"
-else
-    echo "Cloning repository..."
-    git clone "$REPO_URL" "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-    echo -e "${GREEN}✓ Repository cloned${NC}"
-fi
-
-# Step 2: Clean old agent binaries
+# ── Step 1: Stop services & free port ──────────────────────────────────────
 echo ""
-echo -e "${BLUE}[2/5] Cleaning old agent binaries...${NC}"
+echo -e "${BLUE}[1/5] Stopping services...${NC}"
+if [[ "$OSTYPE" == "linux"* ]]; then
+    if systemctl list-units --type=service 2>/dev/null | grep -q controlsphere; then
+        sudo systemctl stop controlsphere.service 2>/dev/null || true
+        echo -e "${GREEN}✓ Service stopped${NC}"
+    fi
+    # Kill any leftover process on port 3000
+    sudo lsof -ti:3000 2>/dev/null | xargs sudo kill -9 2>/dev/null || true
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    PLIST_FILE="$HOME/Library/LaunchAgents/com.controlsphere.server.plist"
+    if [ -f "$PLIST_FILE" ]; then
+        launchctl unload "$PLIST_FILE" 2>/dev/null || true
+        echo -e "${GREEN}✓ Service stopped (launchd)${NC}"
+    fi
+    lsof -ti:3000 2>/dev/null | xargs kill -9 2>/dev/null || true
+fi
+sleep 1
+echo -e "${GREEN}✓ Port 3000 is free${NC}"
+
+# ── Step 2: Pull latest code (in-place, no copy) ──────────────────────────
+echo ""
+echo -e "${BLUE}[2/5] Updating repository (in-place)...${NC}"
+
+# Stash any local changes (e.g. .env modifications) so git pull works
+git stash --include-untracked 2>/dev/null || true
+
+git fetch origin
+BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "main")
+git reset --hard "origin/${BRANCH}"
+echo -e "${GREEN}✓ Repository updated to latest origin/${BRANCH}${NC}"
+
+# Re-apply stashed changes (restores .env etc.)
+git stash pop 2>/dev/null || true
+
+# ── Step 3: Clean old agent binaries ──────────────────────────────────────
+echo ""
+echo -e "${BLUE}[3/5] Cleaning old agent binaries...${NC}"
 if [ -d "agent/bin" ]; then
     rm -f agent/bin/maintainer-agent*
     echo -e "${GREEN}✓ Old binaries deleted from agent/bin${NC}"
-else
-    echo -e "${YELLOW}⚠️  agent/bin directory not found${NC}"
 fi
-
-# Also clean download directory if it exists
+if [ -d "server/public/downloads" ]; then
+    rm -f server/public/downloads/maintainer-agent*
+    echo -e "${GREEN}✓ Old binaries deleted from downloads directory${NC}"
+fi
 if [ -d "server/public/download" ]; then
     rm -f server/public/download/maintainer-agent*
     echo -e "${GREEN}✓ Old binaries deleted from download directory${NC}"
 fi
 
-# Step 3: Run server setup
+# ── Step 4: Run server setup ──────────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[3/5] Running server setup...${NC}"
+echo -e "${BLUE}[4/5] Running server setup...${NC}"
 if [ -f "setup-server.sh" ]; then
     chmod +x setup-server.sh
     sudo ./setup-server.sh
     echo -e "${GREEN}✓ Server setup completed${NC}"
+
+    # Fix file ownership (setup runs as root, service runs as user)
+    CURRENT_USER="${SUDO_USER:-$(whoami)}"
+    if [ -d "server/node_modules" ]; then
+        sudo chown -R "$CURRENT_USER":"$CURRENT_USER" server/node_modules 2>/dev/null || true
+        sudo chown -R "$CURRENT_USER":"$CURRENT_USER" server/.next 2>/dev/null || true
+        echo -e "${GREEN}✓ File permissions fixed${NC}"
+    fi
 else
     echo -e "${RED}✗ setup-server.sh not found!${NC}"
     exit 1
 fi
 
-# Step 4: Rebuild agents
+# ── Step 5: Ensure service is running ─────────────────────────────────────
 echo ""
-echo -e "${BLUE}[4/5] Rebuilding agent binaries...${NC}"
-if [ -f "build-agent.sh" ]; then
-    chmod +x build-agent.sh
-    ./build-agent.sh
-    echo -e "${GREEN}✓ Agent binaries rebuilt${NC}"
-elif [ -f "agent/build-agent.sh" ]; then
-    chmod +x agent/build-agent.sh
-    cd agent
-    ./build-agent.sh
-    cd ..
-    echo -e "${GREEN}✓ Agent binaries rebuilt${NC}"
-else
-    echo -e "${YELLOW}⚠️  Build script not found. Binaries will be built automatically on next start.${NC}"
-fi
+echo -e "${BLUE}[5/5] Starting service...${NC}"
 
-# Step 5: Restart services
-echo ""
-echo -e "${BLUE}[5/5] Restarting services...${NC}"
+# setup-server.sh already starts the service, but verify it's running
+sleep 3
 if [[ "$OSTYPE" == "linux"* ]]; then
-    if systemctl list-units --type=service | grep -q controlsphere; then
+    if sudo systemctl is-active --quiet controlsphere.service 2>/dev/null; then
+        echo -e "${GREEN}✓ ControlSphere service is running${NC}"
+    else
+        echo -e "${YELLOW}Restarting service...${NC}"
         sudo systemctl daemon-reload
         sudo systemctl restart controlsphere.service
-        sleep 2
+        sleep 3
         if sudo systemctl is-active --quiet controlsphere.service; then
             echo -e "${GREEN}✓ ControlSphere service restarted successfully${NC}"
         else
-            echo -e "${RED}✗ Service failed to start. Check logs: sudo journalctl -u controlsphere -f${NC}"
+            echo -e "${RED}✗ Service failed to start. Check logs:${NC}"
+            echo -e "  sudo journalctl -u controlsphere -f"
         fi
-    else
-        echo -e "${YELLOW}⚠️  No controlsphere systemd service found. Setup will create it.${NC}"
     fi
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     PLIST_FILE="$HOME/Library/LaunchAgents/com.controlsphere.server.plist"
     if [ -f "$PLIST_FILE" ]; then
-        launchctl unload "$PLIST_FILE" 2>/dev/null || true
-        launchctl load "$PLIST_FILE"
-        echo -e "${GREEN}✓ ControlSphere service restarted (launchd)${NC}"
-    else
-        echo -e "${YELLOW}⚠️  No launchd service found.${NC}"
+        launchctl load "$PLIST_FILE" 2>/dev/null || true
+        echo -e "${GREEN}✓ ControlSphere service started (launchd)${NC}"
     fi
 fi
 
