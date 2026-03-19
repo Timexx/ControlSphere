@@ -58,6 +58,7 @@ import AppShell from '@/components/AppShell'
 import AddAgentModal from '@/components/AddAgentModal'
 import CriticalCommandDialog, { isCriticalCommand } from '@/components/CriticalCommandDialog'
 import TerminalAuthDialog from '@/components/TerminalAuthDialog'
+import SystemUpdateDialog from '@/components/SystemUpdateDialog'
 import {
   CartesianGrid,
   Line,
@@ -198,8 +199,10 @@ export default function MachinePage() {
     openEvents: number
     highestSeverity: string | null
     securityUpdates: number
+    availableUpdates: number
+    lastScanAt: string | null
     vulnerabilities: { critical: number; high: number; medium: number; low: number; total: number }
-  }>({ openEvents: 0, highestSeverity: null, securityUpdates: 0, vulnerabilities: { critical: 0, high: 0, medium: 0, low: 0, total: 0 } })
+  }>({ openEvents: 0, highestSeverity: null, securityUpdates: 0, availableUpdates: 0, lastScanAt: null, vulnerabilities: { critical: 0, high: 0, medium: 0, low: 0, total: 0 } })
   const [notesDraft, setNotesDraft] = useState('')
   const [notesDirty, setNotesDirty] = useState(false)
   const [notesSaving, setNotesSaving] = useState(false)
@@ -230,6 +233,7 @@ export default function MachinePage() {
   const [showSmoothing, setShowSmoothing] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
   const [userRole, setUserRole] = useState<string | null>(null)
+  const [showUpdateDialog, setShowUpdateDialog] = useState(false)
   
   // Sync ref with state
   useEffect(() => {
@@ -466,17 +470,21 @@ export default function MachinePage() {
             else if (sev === 'medium') vulnCounts.medium++
             else vulnCounts.low++
           }
-          // Count security update packages from lastScan summary or ports
+          // Count update packages from lastScan summary
           const scanSummary = secData.lastScan?.summary
           let securityUpdates = 0
+          let availableUpdates = 0
           if (scanSummary) {
             const parsed = typeof scanSummary === 'string' ? JSON.parse(scanSummary) : scanSummary
             securityUpdates = parsed?.securityUpdates ?? 0
+            availableUpdates = parsed?.updates ?? 0
           }
           setSecuritySummary({
             openEvents,
             highestSeverity: openEvents > 0 ? highestSeverity : null,
             securityUpdates,
+            availableUpdates,
+            lastScanAt: secData.lastScan?.createdAt ?? null,
             vulnerabilities: vulnCounts
           })
         } catch (secError) {
@@ -1120,11 +1128,12 @@ export default function MachinePage() {
                     />
                     {!parseIsWindows(machine.osInfo) && (
                       <ActionButton
-                        onClick={() => handleCommand('apt update && apt upgrade -y')}
-                        disabled={!isOnline || !!executing || rebooting}
+                        onClick={() => setShowUpdateDialog(true)}
+                        disabled={!isOnline || rebooting}
                         tone="success"
                         icon={<Download className="h-5 w-5" />}
                         label={t('actions.systemUpdate')}
+                        badge={securitySummary.availableUpdates + securitySummary.securityUpdates || undefined}
                       />
                     )}
                     <ActionButton
@@ -1889,6 +1898,17 @@ export default function MachinePage() {
           onCancel={() => setPendingTerminalAuth(false)}
         />
       )}
+
+      {/* System Update Dialog */}
+      {showUpdateDialog && (
+        <SystemUpdateDialog
+          machineId={machine.id}
+          machineHostname={machine.hostname}
+          socket={socket}
+          lastScanAt={securitySummary.lastScanAt}
+          onClose={() => setShowUpdateDialog(false)}
+        />
+      )}
     </AppShell>
   )
 }
@@ -2129,12 +2149,14 @@ function ActionButton({
   icon,
   label,
   tone = 'primary',
+  badge,
 }: {
   onClick: () => void
   disabled?: boolean
   icon: ReactNode
   label: string
   tone?: ActionTone
+  badge?: number
 }) {
   const toneMap: Record<ActionTone, string> = {
     primary: 'bg-cyan-600 text-white hover:bg-cyan-500 border border-cyan-500/50',
@@ -2156,10 +2178,15 @@ function ActionButton({
         toneMap[tone]
       )}
     >
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-1">
         {icon}
         <span>{label}</span>
       </div>
+      {badge != null && badge > 0 && (
+        <span className="ml-auto inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full bg-white/20 text-white text-xs font-bold leading-none">
+          {badge}
+        </span>
+      )}
     </button>
   )
 }
