@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Settings, Server, Globe, CheckCircle2, AlertCircle, RefreshCw, Copy, Check } from 'lucide-react'
 import AppShell from '@/components/AppShell'
 import AddAgentModal from '@/components/AddAgentModal'
+import SystemUpdateCard from '@/components/SystemUpdateCard'
 import { useTranslations } from 'next-intl'
 
 export default function SettingsPage() {
@@ -200,6 +201,9 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* ── Server Update Card ──────────────────────────────────── */}
+        <SystemUpdateCard />
       </div>
 
       {showAddModal && <AddAgentModal onClose={() => setShowAddModal(false)} />}

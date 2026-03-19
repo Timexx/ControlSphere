@@ -34,7 +34,7 @@ fi
 
 # ── Step 1: Stop services & free port ──────────────────────────────────────
 echo ""
-echo -e "${BLUE}[1/5] Stopping services...${NC}"
+echo -e "${BLUE}[1/6] Stopping services...${NC}"
 if [[ "$OSTYPE" == "linux"* ]]; then
     if systemctl list-units --type=service 2>/dev/null | grep -q controlsphere; then
         sudo systemctl stop controlsphere.service 2>/dev/null || true
@@ -55,7 +55,7 @@ echo -e "${GREEN}✓ Port 3000 is free${NC}"
 
 # ── Step 2: Pull latest code (in-place, no copy) ──────────────────────────
 echo ""
-echo -e "${BLUE}[2/5] Updating repository (in-place)...${NC}"
+echo -e "${BLUE}[2/6] Updating repository (in-place)...${NC}"
 
 # Stash any local changes (e.g. .env modifications) so git pull works
 git stash --include-untracked 2>/dev/null || true
@@ -81,7 +81,7 @@ git stash pop 2>/dev/null || true
 
 # ── Step 3: Clean old agent binaries ──────────────────────────────────────
 echo ""
-echo -e "${BLUE}[3/5] Cleaning old agent binaries...${NC}"
+echo -e "${BLUE}[3/6] Cleaning old agent binaries...${NC}"
 if [ -d "agent/bin" ]; then
     sudo rm -f agent/bin/maintainer-agent* 2>/dev/null || rm -f agent/bin/maintainer-agent* 2>/dev/null || true
     echo -e "${GREEN}✓ Old binaries deleted from agent/bin${NC}"
@@ -95,9 +95,30 @@ if [ -d "server/public/download" ]; then
     echo -e "${GREEN}✓ Old binaries deleted from download directory${NC}"
 fi
 
-# ── Step 4: Run server setup ──────────────────────────────────────────────
+# ── Step 4: Rebuild agent binaries ────────────────────────────────────────
 echo ""
-echo -e "${BLUE}[4/5] Running server setup...${NC}"
+echo -e "${BLUE}[4/6] Rebuilding agent binaries...${NC}"
+if [ -f "server/scripts/build-agents-if-needed.sh" ]; then
+    chmod +x server/scripts/build-agents-if-needed.sh
+    if ./server/scripts/build-agents-if-needed.sh; then
+        echo -e "${GREEN}✓ Agent binaries rebuilt${NC}"
+    else
+        echo -e "${YELLOW}⚠ Agent build finished with warnings – check output above${NC}"
+    fi
+elif [ -f "agent/build-agent.sh" ]; then
+    chmod +x agent/build-agent.sh
+    if (cd agent && ./build-agent.sh); then
+        echo -e "${GREEN}✓ Agent binaries rebuilt${NC}"
+    else
+        echo -e "${YELLOW}⚠ Agent build finished with warnings${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠ No agent build script found, skipping agent rebuild${NC}"
+fi
+
+# ── Step 5: Run server setup ──────────────────────────────────────────────
+echo ""
+echo -e "${BLUE}[5/6] Running server setup...${NC}"
 if [ -f "setup-server.sh" ]; then
     chmod +x setup-server.sh
     sudo ./setup-server.sh
@@ -115,9 +136,9 @@ else
     exit 1
 fi
 
-# ── Step 5: Ensure service is running ─────────────────────────────────────
+# ── Step 6: Ensure service is running ─────────────────────────────────────
 echo ""
-echo -e "${BLUE}[5/5] Starting service...${NC}"
+echo -e "${BLUE}[6/6] Starting service...${NC}"
 
 # setup-server.sh already starts the service, but verify it's running
 sleep 3

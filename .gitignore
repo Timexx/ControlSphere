@@ -26,5 +26,10 @@ node_modules/
 *.swo
 *~
 
+# Claude
+._CLAUDE.md
+.claude/
+CLAUDE.md
+
 # OS
 Thumbs.db

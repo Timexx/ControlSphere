@@ -14,6 +14,8 @@ import { orchestrator } from './lib/orchestrator'
 import { SecretEncryptionService } from './infrastructure/crypto/SecretEncryptionService'
 import { startCveMirrorService } from './services/cve-mirror'
 import { stateCache } from './lib/state-cache'
+import { updateChecker } from './lib/update-checker'
+import { realtimeEvents } from './lib/realtime-events'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = process.env.HOSTNAME || '0.0.0.0'
@@ -64,6 +66,14 @@ async function bootstrap(): Promise<void> {
   await httpServer.start()
   // Delay CVE mirror start by 30s so user requests are served immediately on boot
   setTimeout(() => startCveMirrorService(undefined, prisma), 30_000)
+
+  // Start periodic update checker (checks GitHub every 6h, first check after 30s)
+  updateChecker.startPeriodicCheck()
+
+  // Broadcast update availability to all web clients
+  realtimeEvents.on('update_available', (data: unknown) => {
+    broadcast({ type: 'update_available', ...(data as Record<string, unknown>) })
+  })
 
   // Initialize SecureRemoteTerminalService
   // Configuration via environment variables:

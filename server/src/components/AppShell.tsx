@@ -33,6 +33,7 @@ export default function AppShell({
   const [showRefreshTooltip, setShowRefreshTooltip] = useState(false)
   const [internalLoggingOut, setInternalLoggingOut] = useState(false)
   const [userRole, setUserRole] = useState<string | null>(null)
+  const [updateAvailable, setUpdateAvailable] = useState(false)
   const remainingRef = useRef<number | null>(null)
   const expiryDialogRef = useRef(false)
 
@@ -148,6 +149,15 @@ export default function AppShell({
       document.removeEventListener('visibilitychange', handleVisibility)
     }
   }, [fetchVulnSummary])
+
+  // Check for server updates (admin only)
+  useEffect(() => {
+    if (userRole !== 'admin') return
+    fetch('/api/admin/server-update/check')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d) setUpdateAvailable(d.available && !d.dismissed) })
+      .catch(() => {})
+  }, [userRole])
 
   const handleRefreshSession = async () => {
     if (refreshing) return
@@ -361,7 +371,12 @@ export default function AppShell({
                         : "border-slate-800 text-slate-300 hover:border-cyan-500/50 hover:text-white hover:bg-[#0d1722]"
                     )}
                   >
-                    <item.icon className="h-4 w-4" />
+                    <span className="relative">
+                      <item.icon className="h-4 w-4" />
+                      {item.href === '/settings' && updateAvailable && (
+                        <span className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-amber-400 border-2 border-[#0a0f16] animate-pulse" />
+                      )}
+                    </span>
                     <span className="text-sm font-medium">{item.label}</span>
                   </Link>
                 )
