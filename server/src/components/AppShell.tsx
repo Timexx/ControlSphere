@@ -219,7 +219,10 @@ export default function AppShell({
               </p>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold text-white">Fleet Console</h1>
-                <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                <span
+                  title={`v${process.env.NEXT_PUBLIC_APP_VERSION ?? '1.0.0'}`}
+                  className="px-2 py-0.5 text-xs font-medium rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 cursor-default"
+                >
                   BETA
                 </span>
               </div>
