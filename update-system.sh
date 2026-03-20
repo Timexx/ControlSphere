@@ -8,15 +8,26 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}  ControlSphere System Update${NC}"
-echo -e "${GREEN}============================================${NC}"
-echo ""
-
 # ── Detect the directory where THIS script lives ──
 # This ensures we always update in-place, no matter where we run from
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$SCRIPT_DIR"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+if [ -f "$INSTALL_DIR/scripts/log-helper.sh" ]; then
+    source "$INSTALL_DIR/scripts/log-helper.sh"
+    init_log "update"
+    rotate_logs "update" 10
+    enable_logging
+    trap 'finalize_log $?' EXIT
+    echo -e "${BLUE}📄 Log: ${LOG_FILE}${NC}"
+    echo ""
+fi
+
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}  ControlSphere System Update${NC}"
+echo -e "${GREEN}============================================${NC}"
+echo ""
 
 echo -e "${BLUE}Working directory: ${INSTALL_DIR}${NC}"
 cd "$INSTALL_DIR"

@@ -8,6 +8,18 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# ── Logging ───────────────────────────────────────────────────────────────────
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$SCRIPT_DIR/scripts/log-helper.sh" ]; then
+    source "$SCRIPT_DIR/scripts/log-helper.sh"
+    init_log "setup"
+    rotate_logs "setup" 10
+    enable_logging
+    trap 'finalize_log $?' EXIT
+    echo -e "${BLUE}📄 Log: ${LOG_FILE}${NC}"
+    echo ""
+fi
+
 echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  MaintainerWeb Server Setup${NC}"
 echo -e "${GREEN}============================================${NC}"
