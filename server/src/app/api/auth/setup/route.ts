@@ -48,7 +48,7 @@ export async function POST(request: Request) {
 
     const isSecure = new URL(request.url).protocol === 'https:'
 
-    cookies().set('session', session, {
+    ;(await cookies()).set('session', session, {
       expires,
       httpOnly: true,
       sameSite: 'lax',

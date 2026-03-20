@@ -4,11 +4,12 @@ import { orchestrator } from '@/lib/orchestrator'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const group = await prisma.group.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         members: {
           include: {

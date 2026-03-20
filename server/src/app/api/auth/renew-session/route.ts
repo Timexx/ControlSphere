@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
 
     // Audit log: bulk page access via password re-authentication
     try {
-      const ip = request.ip || request.headers.get('x-forwarded-for') || 'unknown'
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
       const userAgent = request.headers.get('user-agent') || 'unknown'
       const referer = request.headers.get('referer') || 'unknown'
 

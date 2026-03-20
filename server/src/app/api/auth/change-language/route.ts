@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user from session
-    const cookieStore = cookies()
+    const cookieStore = await cookies()
     const sessionToken = cookieStore.get('session')?.value
 
     if (!sessionToken) {

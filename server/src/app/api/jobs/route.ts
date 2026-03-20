@@ -68,7 +68,7 @@ export async function POST(request: NextRequest) {
     if (!body.dryRun) {
       try {
         const session = await getSession()
-        const ip = request.ip || request.headers.get('x-forwarded-for') || 'unknown'
+        const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
         const userAgent = request.headers.get('user-agent') || 'unknown'
 
         await prisma.auditLog.create({

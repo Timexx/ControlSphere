@@ -47,10 +47,10 @@ export const metadata: Metadata = {
 }
 
 async function resolveRequestLocale() {
-  const cookieStore = cookies()
+  const cookieStore = await cookies()
   const sessionToken = cookieStore.get('session')?.value
   const localeCookie = cookieStore.get('NEXT_LOCALE')?.value
-  const acceptLanguage = headers().get('accept-language')
+  const acceptLanguage = (await headers()).get('accept-language')
 
   console.log('🔍 Resolving locale...')
   console.log('  NEXT_LOCALE cookie:', localeCookie)

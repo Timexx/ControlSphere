@@ -4,6 +4,20 @@ import { SecureRemoteTerminalService, SessionToken, SecureMessage } from '../Sec
 import { PrismaClient } from '@prisma/client'
 import { ILogger } from '../../../types/logger'
 
+// Mock the prisma singleton used inside validateUserMachineAccess
+vi.mock('../../../lib/prisma', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn().mockResolvedValue({ role: 'admin', active: true })
+    }
+  }
+}))
+
+// Mock canAccessMachine so tests don't require a real DB
+vi.mock('../../../lib/authorization', () => ({
+  canAccessMachine: vi.fn().mockResolvedValue(true)
+}))
+
 /**
  * Unit Tests for SecureRemoteTerminalService
  * 

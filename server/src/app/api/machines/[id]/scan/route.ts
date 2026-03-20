@@ -8,10 +8,10 @@ import { getSession } from '@/lib/auth'
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id: machineId } = await params
   try {
-    const machineId = params.id
     
     // Get authenticated session
     const session = await getSession()
@@ -44,7 +44,7 @@ export async function POST(
 
     // Audit log for scan trigger
     // ISO 27001 A.12.4.1: Event logging
-    const ip = request.ip || request.headers.get('x-forwarded-for') || 'unknown'
+    const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
     const userAgent = request.headers.get('user-agent') || 'unknown'
 
     try {

@@ -37,11 +37,12 @@ function deduplicateEvents(events: any[]): any[] {
 
 export async function GET(
   _request: Request,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const machine = await prisma.machine.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true, hostname: true, osInfo: true }
     })
 
@@ -51,25 +52,25 @@ export async function GET(
 
     const [rawEvents, auditLogs, lastScan, ports, vulnerabilities] = await Promise.all([
       prisma.securityEvent.findMany({
-        where: { machineId: params.id },
+        where: { machineId: id },
         orderBy: { createdAt: 'desc' },
         take: 100 // Fetch more to account for deduplication
       }),
       prisma.auditLog.findMany({
-        where: { machineId: params.id },
+        where: { machineId: id },
         orderBy: { createdAt: 'desc' },
         take: 50
       }),
       prisma.packageScan.findFirst({
-        where: { machineId: params.id },
+        where: { machineId: id },
         orderBy: { createdAt: 'desc' }
       }),
       prisma.port.findMany({
-        where: { machineId: params.id },
+        where: { machineId: id },
         orderBy: { port: 'asc' }
       }),
       prisma.vulnerabilityMatch.findMany({
-        where: { machineId: params.id },
+        where: { machineId: id },
         orderBy: { createdAt: 'desc' },
         include: {
           cve: true,
@@ -77,10 +78,10 @@ export async function GET(
         }
       })
     ])
-    let scanProgress = getScanProgress(params.id)
+    let scanProgress = getScanProgress(id)
     if (!scanProgress) {
       const dbProgress = await prisma.scanProgressState.findUnique({
-        where: { machineId: params.id }
+        where: { machineId: id }
       })
       if (dbProgress) {
         scanProgress = {
@@ -110,7 +111,7 @@ export async function GET(
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {
       return NextResponse.json({
-        machine: { id: params.id, hostname: null },
+        machine: { id, hostname: null },
         openEvents: 0,
         events: [],
         auditLogs: [],

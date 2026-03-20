@@ -32,7 +32,7 @@ export async function POST() {
       expires,
     })
 
-    cookies().set('session', newSession, { expires, httpOnly: true })
+    ;(await cookies()).set('session', newSession, { expires, httpOnly: true })
 
     return NextResponse.json({ success: true })
   } catch (error) {

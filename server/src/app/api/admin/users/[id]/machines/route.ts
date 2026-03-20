@@ -11,14 +11,15 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const session = await getSession()
     requireAdmin(session)
 
     const user = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true, role: true },
     })
 
@@ -32,7 +33,7 @@ export async function GET(
     }
 
     const access = await prisma.userMachineAccess.findMany({
-      where: { userId: params.id },
+      where: { userId: id },
       select: {
         machineId: true,
         assignedAt: true,
@@ -70,14 +71,15 @@ export async function GET(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const session = await getSession()
     const admin = requireAdmin(session)
 
     const user = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true, username: true, role: true },
     })
 
@@ -121,7 +123,7 @@ export async function PUT(
 
     // Get current assignments for audit diff
     const currentAccess = await prisma.userMachineAccess.findMany({
-      where: { userId: params.id },
+      where: { userId: id },
       select: { machineId: true },
     })
     const currentIdArr: string[] = currentAccess.map((a: { machineId: string }) => a.machineId)
@@ -134,13 +136,13 @@ export async function PUT(
     // Transactional replace: delete all current, insert new
     await prisma.$transaction([
       prisma.userMachineAccess.deleteMany({
-        where: { userId: params.id },
+        where: { userId: id },
       }),
       ...(machineIds.length > 0
         ? [
             prisma.userMachineAccess.createMany({
               data: machineIds.map((machineId: string) => ({
-                userId: params.id,
+                userId: id,
                 machineId,
                 assignedBy: admin.id,
               })),

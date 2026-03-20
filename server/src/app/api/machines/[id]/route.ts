@@ -7,20 +7,21 @@ import { createAuditEntry, AuditActions } from '@/lib/audit'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     // Access control
     const session = await getSession()
     const userId = session?.user?.id
     const role = session?.user?.role || 'viewer'
     if (userId) {
-      const hasAccess = await canAccessMachine(userId, role as any, params.id)
+      const hasAccess = await canAccessMachine(userId, role as any, id)
       if (!hasAccess) {
         await createAuditEntry({
           action: AuditActions.MACHINE_ACCESS_DENIED,
           userId,
-          machineId: params.id,
+          machineId: id,
           severity: 'warn',
           details: { reason: 'No machine access', role },
         })
@@ -29,21 +30,21 @@ export async function GET(
     }
 
     // Fast path: serve base data from cache, enrich with commands/links/disks from DB
-    const cached = stateCache.ready ? stateCache.getMachine(params.id) : null
+    const cached = stateCache.ready ? stateCache.getMachine(id) : null
     if (cached) {
       const [commands, links, latestMetric] = await Promise.all([
         prisma.command.findMany({
-          where: { machineId: params.id },
+          where: { machineId: id },
           orderBy: { createdAt: 'desc' },
           take: 20,
         }),
         prisma.machineLink.findMany({
-          where: { machineId: params.id },
+          where: { machineId: id },
           orderBy: { createdAt: 'desc' },
         }),
         // Load latest metric with disks array
         prisma.metric.findFirst({
-          where: { machineId: params.id },
+          where: { machineId: id },
           orderBy: { timestamp: 'desc' },
           select: {
             cpuUsage: true,
@@ -103,7 +104,7 @@ export async function GET(
 
     // Fallback: full DB query
     const machine = await prisma.machine.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: {
         id: true,
         hostname: true,
@@ -171,14 +172,15 @@ export async function GET(
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const body = await request.json()
     const notes = typeof body.notes === 'string' ? body.notes : ''
 
     const machine = await prisma.machine.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true }
     })
 
@@ -190,7 +192,7 @@ export async function PATCH(
     }
 
     const updated = await prisma.machine.update({
-      where: { id: params.id },
+      where: { id },
       data: { notes },
       select: {
         id: true,
@@ -200,7 +202,7 @@ export async function PATCH(
     })
 
     // Write-through: update cache so subsequent reads are fresh
-    const cached = stateCache.getMachine(params.id)
+    const cached = stateCache.getMachine(id)
     if (cached) {
       cached.notes = updated.notes
       cached.updatedAt = updated.updatedAt

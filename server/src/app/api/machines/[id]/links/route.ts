@@ -12,8 +12,9 @@ function normalizeUrl(url: string): string {
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const body = await request.json()
     const title = typeof body.title === 'string' ? body.title.trim() : ''
@@ -30,7 +31,7 @@ export async function POST(
     }
 
     const machine = await prisma.machine.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true }
     })
 
@@ -72,8 +73,9 @@ export async function POST(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const body = await request.json()
     const linkId = typeof body.linkId === 'string' ? body.linkId : ''
@@ -88,7 +90,7 @@ export async function DELETE(
     const link = await prisma.machineLink.findFirst({
       where: {
         id: linkId,
-        machineId: params.id
+        machineId: id
       },
       select: { id: true }
     })

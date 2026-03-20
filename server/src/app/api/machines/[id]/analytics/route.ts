@@ -72,8 +72,9 @@ function average(points: Metric[], key: keyof Metric) {
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const { searchParams } = new URL(request.url)
     const rangeData = parseRange(searchParams.get('range'))
@@ -87,7 +88,7 @@ export async function GET(
 
     const metrics = await prisma.metric.findMany({
       where: {
-        machineId: params.id,
+        machineId: id,
         timestamp: { gte: startTime },
       },
       orderBy: { timestamp: 'desc' },

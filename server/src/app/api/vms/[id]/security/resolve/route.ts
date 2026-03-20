@@ -6,10 +6,10 @@ import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
 // POST: Mark all open security events as resolved for a machine
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const machineId = params.id
+    const { id: machineId } = await params
     
     // Check if machine exists
     const machine = await prisma.machine.findUnique({
@@ -58,10 +58,10 @@ export async function POST(
 // PATCH: Mark a single event or batch of events as resolved
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const machineId = params.id
+    const { id: machineId } = await params
     const body = await request.json()
     const eventIds = body.eventIds as string[] | undefined
     const status = body.status as string || 'resolved'

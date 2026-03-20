@@ -12,14 +12,15 @@ import { createAuditEntry, AuditActions } from '@/lib/audit'
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const session = await getSession()
     const admin = requireAdmin(session)
 
     const targetUser = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true, username: true },
     })
 
@@ -31,7 +32,7 @@ export async function POST(
     const hashedPassword = await hashPassword(newPassword)
 
     await prisma.user.update({
-      where: { id: params.id },
+      where: { id },
       data: { password: hashedPassword },
     })
 

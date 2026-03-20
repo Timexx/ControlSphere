@@ -11,14 +11,15 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const session = await getSession()
     requireAdmin(session)
 
     const user = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: {
         id: true,
         username: true,
@@ -67,14 +68,15 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const session = await getSession()
     const admin = requireAdmin(session)
 
     const targetUser = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true, username: true, role: true, active: true },
     })
 
@@ -149,7 +151,7 @@ export async function PATCH(
     }
 
     const updated = await prisma.user.update({
-      where: { id: params.id },
+      where: { id },
       data: updates,
       select: {
         id: true,
@@ -175,13 +177,14 @@ export async function PATCH(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   try {
     const session = await getSession()
     const admin = requireAdmin(session)
 
-    if (params.id === admin.id) {
+    if (id === admin.id) {
       return NextResponse.json(
         { error: 'Cannot delete your own account' },
         { status: 400 }
@@ -189,7 +192,7 @@ export async function DELETE(
     }
 
     const targetUser = await prisma.user.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true, username: true, role: true },
     })
 
@@ -198,7 +201,7 @@ export async function DELETE(
     }
 
     // Delete user (cascades to UserMachineAccess, AuditLog.userId set to null)
-    await prisma.user.delete({ where: { id: params.id } })
+    await prisma.user.delete({ where: { id } })
 
     await createAuditEntry({
       action: AuditActions.USER_DELETED,

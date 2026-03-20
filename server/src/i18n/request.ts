@@ -3,7 +3,7 @@ import {headers} from 'next/headers';
 import {resolveLocale, defaultLocale} from '../i18n';
 
 export default getRequestConfig(async () => {
-  const hdrs = headers();
+  const hdrs = await headers();
   const acceptLanguage = hdrs.get('accept-language');
   const locale = resolveLocale(undefined, acceptLanguage) || defaultLocale;
 

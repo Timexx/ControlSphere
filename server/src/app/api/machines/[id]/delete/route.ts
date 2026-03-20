@@ -7,10 +7,10 @@ import { createAuditEntry } from '@/lib/audit'
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    const { id } = await params
 
     // Only admin or machine creator can delete
     const session = await getSession()

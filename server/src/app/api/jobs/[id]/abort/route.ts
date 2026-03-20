@@ -5,8 +5,9 @@ import { prisma } from '@/lib/prisma'
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   const session = await getSession()
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const role = (session.user as any).role || 'user'
@@ -14,7 +15,7 @@ export async function POST(
 
   if (role === 'user') {
     const job = await prisma.job.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { createdByUserId: true }
     })
     if (job?.createdByUserId && job.createdByUserId !== session.user.id) {
@@ -23,11 +24,11 @@ export async function POST(
   }
 
   try {
-    await orchestrator.abortJob(params.id)
+    await orchestrator.abortJob(id)
 
     // Audit log for job abort
     try {
-      const ip = request.ip || request.headers.get('x-forwarded-for') || 'unknown'
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
       const userAgent = request.headers.get('user-agent') || 'unknown'
 
       await prisma.auditLog.create({
@@ -37,7 +38,7 @@ export async function POST(
           userId: session.user.id,
           severity: 'warning',
           details: JSON.stringify({
-            jobId: params.id,
+            jobId: id,
             ip,
             userAgent
           })

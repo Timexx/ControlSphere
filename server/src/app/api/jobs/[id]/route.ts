@@ -5,15 +5,16 @@ import { getSession } from '@/lib/auth'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   const session = await getSession()
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const role = (session.user as any).role || 'user'
   if (role === 'viewer') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   try {
-    const job = await orchestrator.getJob(params.id)
+    const job = await orchestrator.getJob(id)
 
     if (!job) {
       return NextResponse.json({ error: 'Job not found' }, { status: 404 })
@@ -32,8 +33,9 @@ export async function GET(
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   const session = await getSession()
   if (!session?.user?.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const role = (session.user as any).role || 'user'
@@ -41,7 +43,7 @@ export async function DELETE(
 
   try {
     const job = await prisma.job.findUnique({
-      where: { id: params.id },
+      where: { id },
       select: { id: true, status: true, command: true, createdByUserId: true }
     })
 
@@ -63,7 +65,7 @@ export async function DELETE(
 
     // Audit log for job deletion
     try {
-      const ip = request.ip || request.headers.get('x-forwarded-for') || 'unknown'
+      const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
       const userAgent = request.headers.get('user-agent') || 'unknown'
 
       await prisma.auditLog.create({
