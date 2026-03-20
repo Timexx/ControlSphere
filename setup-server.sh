@@ -474,6 +474,13 @@ fi
 
 echo ""
 echo -e "${GREEN}Building production server...${NC}"
+# Resolve the repo root (one level above server/)
+REPO_DIR="$(dirname "$(realpath "$0")")"
+# Git 2.35.2+ rejects repos owned by a different user (e.g. root running on a
+# user-owned repo). Allow it temporarily so rev-parse works inside the build.
+git config --global --add safe.directory "$REPO_DIR" 2>/dev/null || true
+export BUILD_SHA
+BUILD_SHA=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo '')
 npm run build
 
 # ── Create system service (systemd / launchd) ──────────────────────────────
