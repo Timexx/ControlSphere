@@ -8,6 +8,7 @@
 
 import fs from 'fs'
 import path from 'path'
+import { execSync } from 'child_process'
 import { realtimeEvents } from './realtime-events'
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -49,8 +50,24 @@ class UpdateChecker {
     return process.env.NEXT_PUBLIC_APP_VERSION || '1.0.0'
   }
 
+  private resolvedSha: string | null = null
+
   get currentSha(): string {
-    return process.env.NEXT_PUBLIC_BUILD_SHA || 'dev'
+    const envSha = process.env.NEXT_PUBLIC_BUILD_SHA || 'dev'
+    if (envSha !== 'dev') return envSha
+
+    // Build SHA missing — resolve from git at runtime (once)
+    if (this.resolvedSha) return this.resolvedSha
+    try {
+      this.resolvedSha = execSync('git rev-parse --short HEAD', {
+        cwd: this.installDir,
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).toString().trim()
+      return this.resolvedSha
+    } catch {
+      return 'dev'
+    }
   }
 
   get installDir(): string {
@@ -104,7 +121,7 @@ class UpdateChecker {
 
     const sha = this.currentSha
     if (sha === 'dev') {
-      // Dev mode — no meaningful SHA to compare
+      // Neither build SHA nor git available — cannot compare
       this.cache = {
         available: false,
         currentVersion: this.currentVersion,
