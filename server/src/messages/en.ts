@@ -1011,6 +1011,11 @@ const messages = {
     eyebrow: 'Administration',
     title: 'Settings',
     subtitle: 'System-wide configuration for this ControlSphere instance.',
+    tabs: {
+      general: 'General',
+      update: 'System Update',
+      users: 'Users',
+    },
     serverUrl: {
       eyebrow: 'Network',
       title: 'Server URL',

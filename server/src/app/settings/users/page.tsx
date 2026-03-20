@@ -4,10 +4,8 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Users, Plus, Shield, Eye, UserX, Trash2, KeyRound,
   CheckCircle2, AlertCircle, Search, X, Copy, Check,
-  ChevronRight, Server, AlertTriangle,
+  Server, AlertTriangle,
 } from 'lucide-react'
-import AppShell from '@/components/AppShell'
-import AddAgentModal from '@/components/AddAgentModal'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 
@@ -38,7 +36,6 @@ interface MachineItem {
 
 export default function UserManagementPage() {
   const t = useTranslations('userManagement')
-  const tShell = useTranslations('appShell')
 
   const [users, setUsers] = useState<UserItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -46,7 +43,6 @@ export default function UserManagementPage() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
 
   // Modals
-  const [showAddModal, setShowAddModal] = useState(false)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showPasswordModal, setShowPasswordModal] = useState<{ username: string; password: string } | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState<UserItem | null>(null)
@@ -78,32 +74,18 @@ export default function UserManagementPage() {
   }, [loadUsers])
 
   return (
-    <AppShell onAddAgent={() => setShowAddModal(true)}>
-      <div className="space-y-6 max-w-5xl">
-        {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm text-slate-400">
-          <a href="/settings" className="hover:text-white transition-colors">{t('breadcrumb.settings')}</a>
-          <ChevronRight className="h-3.5 w-3.5" />
-          <span className="text-white">{t('breadcrumb.users')}</span>
-        </div>
-
-        {/* Header */}
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70 font-mono mb-1">
-              {t('eyebrow')}
-            </p>
-            <h2 className="text-2xl font-semibold text-white">{t('title')}</h2>
-            <p className="text-sm text-slate-400 mt-1">{t('subtitle')}</p>
-          </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 text-white text-sm font-medium hover:bg-cyan-500 transition-colors"
-          >
-            <Plus className="h-4 w-4" />
-            {t('create.button')}
-          </button>
-        </div>
+    <>
+    <div className="space-y-6">
+      {/* Create user button */}
+      <div className="flex justify-end">
+        <button
+          onClick={() => setShowCreateModal(true)}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 text-white text-sm font-medium hover:bg-cyan-500 transition-colors"
+        >
+          <Plus className="h-4 w-4" />
+          {t('create.button')}
+        </button>
+      </div>
 
         {/* Error */}
         {error && (
@@ -254,8 +236,6 @@ export default function UserManagementPage() {
 
       {/* ── Modals ────────────────────────────────────────────────────────── */}
 
-      {showAddModal && <AddAgentModal onClose={() => setShowAddModal(false)} />}
-
       {showCreateModal && (
         <CreateUserModal
           onClose={() => setShowCreateModal(false)}
@@ -318,7 +298,7 @@ export default function UserManagementPage() {
           }}
         />
       )}
-    </AppShell>
+    </>
   )
 
   // ─── Inline handlers ────────────────────────────────────────────────────────

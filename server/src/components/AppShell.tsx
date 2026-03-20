@@ -190,7 +190,6 @@ export default function AppShell({
   ];
 
   const bottomNavItems = [
-    ...(userRole === 'admin' ? [{ href: '/settings/users', label: t('nav.users'), icon: Users }] : []),
     ...(userRole === 'admin' ? [{ href: '/settings', label: t('nav.settings'), icon: Settings }] : []),
   ];
 
@@ -361,7 +360,9 @@ export default function AppShell({
             </nav>
             <div className="p-4 border-t border-slate-800 space-y-2">
               {bottomNavItems.map((item) => {
-                const active = pathname === item.href
+                const active = item.href === '/settings'
+                  ? pathname === '/settings' || pathname.startsWith('/settings/')
+                  : pathname === item.href
                 return (
                   <Link
                     key={item.href}
