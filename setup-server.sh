@@ -418,7 +418,8 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     else
         RETRY_COUNT=$((RETRY_COUNT + 1))
         if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
-            echo -e "${YELLOW}Install failed, cleaning cache and retrying...${NC}"
+            echo -e "${YELLOW}Install failed, removing node_modules and cleaning cache before retry...${NC}"
+            rm -rf node_modules 2>/dev/null || true
             npm cache clean --force 2>/dev/null
             sleep 2
         else
