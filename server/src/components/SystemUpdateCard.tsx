@@ -4,10 +4,12 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Download, RefreshCw, CheckCircle2, AlertTriangle, GitCommit,
-  ChevronDown, ChevronUp, X, Lock, Eye, EyeOff, FileText, Loader2, ExternalLink
+  ChevronDown, ChevronUp, FileText, Loader2, ExternalLink, Lock, Eye, EyeOff
 } from 'lucide-react'
 
 const GITHUB_REPO_URL = 'https://github.com/Timexx/ControlSphere'
+const UPDATE_KEY = 'cs_update_active'
+
 import { useTranslations, useLocale } from 'next-intl'
 import { cn } from '@/lib/utils'
 
@@ -154,7 +156,9 @@ export default function SystemUpdateCard() {
   const [updatePhase, setUpdatePhase] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [logPath, setLogPath] = useState<string | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startShaRef = useRef<string | null>(null)
 
   const fetchCheck = useCallback(async (force = false) => {
@@ -171,9 +175,110 @@ export default function SystemUpdateCard() {
     return null
   }, [])
 
+  // ── Polling logic ──────────────────────────────────────────────────
+
+  const startPolling = useCallback((savedLogPath: string | null = null) => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    let elapsed = 0
+    const POLL_INTERVAL = 3000
+    const TIMEOUT = 120_000
+
+    pollRef.current = setInterval(async () => {
+      elapsed += POLL_INTERVAL
+      if (elapsed > TIMEOUT) {
+        clearInterval(pollRef.current!)
+        setUpdatePhase(null)
+        setUpdateError(t('progress.timeout'))
+        localStorage.removeItem(UPDATE_KEY)
+        // keep updating=true so error overlay stays visible
+        return
+      }
+
+      try {
+        const r = await fetch('/api/admin/server-update/check', { cache: 'no-store' })
+        if (r.ok) {
+          const d: UpdateCheckResult = await r.json()
+          if (startShaRef.current && d.currentSha !== startShaRef.current) {
+            clearInterval(pollRef.current!)
+            setData(d)
+            setUpdatePhase('completed')
+            localStorage.removeItem(UPDATE_KEY)
+            setTimeout(() => { setUpdating(false); setUpdatePhase(null) }, 6000)
+          }
+        }
+      } catch {
+        // Server still down — expected during restart
+        setUpdatePhase('restarting')
+      }
+    }, POLL_INTERVAL)
+
+    if (savedLogPath) setLogPath(savedLogPath)
+  }, [t])
+
+  // ── Initial load ───────────────────────────────────────────────────
+
   useEffect(() => {
     fetchCheck().finally(() => setLoading(false))
   }, [fetchCheck])
+
+  // ── Recover update state from localStorage after page reload ───────
+
+  useEffect(() => {
+    const raw = localStorage.getItem(UPDATE_KEY)
+    if (!raw) return
+    try {
+      const { sha, startedAt, savedLogPath } = JSON.parse(raw)
+      if (Date.now() - startedAt < 10 * 60_000) {
+        startShaRef.current = sha
+        setUpdating(true)
+        setUpdatePhase('restarting')
+        if (savedLogPath) setLogPath(savedLogPath)
+        startPolling(savedLogPath)
+      } else {
+        localStorage.removeItem(UPDATE_KEY)
+      }
+    } catch {
+      localStorage.removeItem(UPDATE_KEY)
+    }
+  }, [startPolling])
+
+  // ── Elapsed timer while updating ──────────────────────────────────
+
+  useEffect(() => {
+    if (updating) {
+      const startTime = Date.now()
+      timerRef.current = setInterval(() => {
+        setElapsedSeconds(Math.floor((Date.now() - startTime) / 1000))
+      }, 1000)
+    } else {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
+      setElapsedSeconds(0)
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [updating])
+
+  // ── Prevent accidental navigation during update ───────────────────
+
+  useEffect(() => {
+    if (!updating) return
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+  }, [updating])
+
+  // ── Cleanup on unmount ────────────────────────────────────────────
+
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [])
+
+  // ── Handlers ──────────────────────────────────────────────────────
 
   const handleCheckNow = async () => {
     setChecking(true)
@@ -200,6 +305,12 @@ export default function SystemUpdateCard() {
     setUpdateError(null)
     startShaRef.current = data?.currentSha ?? null
 
+    localStorage.setItem(UPDATE_KEY, JSON.stringify({
+      sha: data?.currentSha ?? null,
+      startedAt: Date.now(),
+      savedLogPath: null,
+    }))
+
     try {
       const res = await fetch('/api/admin/server-update/execute', {
         method: 'POST',
@@ -210,58 +321,31 @@ export default function SystemUpdateCard() {
 
       if (!res.ok) {
         const d = await res.json()
+        // Keep overlay visible — user must dismiss manually
         setUpdateError(d.error || t('errors.updateFailed'))
-        setUpdating(false)
+        localStorage.removeItem(UPDATE_KEY)
         return
       }
 
       const result = await res.json()
-      setLogPath(result.logPath)
+      const newLogPath = result.logPath ?? null
+      setLogPath(newLogPath)
 
-      // The server will die soon. Poll until it comes back with a new SHA.
+      // Persist log path for reload recovery
+      localStorage.setItem(UPDATE_KEY, JSON.stringify({
+        sha: data?.currentSha ?? null,
+        startedAt: Date.now(),
+        savedLogPath: newLogPath,
+      }))
+
       setUpdatePhase('building')
-      let elapsed = 0
-      const POLL_INTERVAL = 3000
-      const TIMEOUT = 120_000
-
-      pollRef.current = setInterval(async () => {
-        elapsed += POLL_INTERVAL
-        if (elapsed > TIMEOUT) {
-          clearInterval(pollRef.current!)
-          setUpdatePhase(null)
-          setUpdateError(t('progress.timeout'))
-          return
-        }
-
-        try {
-          const r = await fetch('/api/admin/server-update/check', { cache: 'no-store' })
-          if (r.ok) {
-            const d: UpdateCheckResult = await r.json()
-            if (startShaRef.current && d.currentSha !== startShaRef.current) {
-              // SHA changed → update succeeded
-              clearInterval(pollRef.current!)
-              setData(d)
-              setUpdatePhase('completed')
-              setTimeout(() => { setUpdating(false); setUpdatePhase(null) }, 5000)
-            }
-          }
-        } catch {
-          // Server still down — expected during update
-          setUpdatePhase('restarting')
-        }
-      }, POLL_INTERVAL)
+      startPolling(newLogPath)
     } catch {
+      // Keep overlay visible — user must dismiss manually
       setUpdateError(t('errors.updateFailed'))
-      setUpdating(false)
+      localStorage.removeItem(UPDATE_KEY)
     }
   }
-
-  // Cleanup poll on unmount
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
-    }
-  }, [])
 
   const relativeTime = (dateStr: string) => {
     const diff = Date.now() - new Date(dateStr).getTime()
@@ -272,6 +356,12 @@ export default function SystemUpdateCard() {
     if (hrs < 24) return locale === 'de' ? `vor ${hrs} Std.` : `${hrs}h ago`
     const days = Math.floor(hrs / 24)
     return locale === 'de' ? `vor ${days} Tag${days > 1 ? 'en' : ''}` : `${days}d ago`
+  }
+
+  const formatElapsed = (s: number) => {
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`
   }
 
   const showUpdate = data?.available && !data.dismissed
@@ -288,6 +378,7 @@ export default function SystemUpdateCard() {
             <div>
               <h3 className="text-xl font-semibold text-white">{t('progress.completed')}</h3>
               <p className="text-sm text-slate-400 mt-2">{t('progress.completedDesc')}</p>
+              <p className="text-xs text-slate-500 mt-3">{formatElapsed(elapsedSeconds)}</p>
             </div>
           </>
         ) : updateError ? (
@@ -321,17 +412,22 @@ export default function SystemUpdateCard() {
                 {updatePhase === 'building' && t('progress.building')}
                 {updatePhase === 'restarting' && t('progress.waitingRestart')}
               </p>
+              <p className="text-xs text-slate-500 mt-2 font-mono">{formatElapsed(elapsedSeconds)}</p>
             </div>
             <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
               <div
-                className="h-full bg-amber-500 rounded-full transition-all duration-500"
+                className={cn(
+                  "h-full rounded-full transition-all duration-1000",
+                  updatePhase === 'restarting' ? "bg-amber-500 animate-pulse" : "bg-amber-500"
+                )}
                 style={{
                   width: updatePhase === 'pulling' ? '20%'
-                    : updatePhase === 'building' ? '50%'
+                    : updatePhase === 'building' ? '55%'
                     : updatePhase === 'restarting' ? '80%' : '10%'
                 }}
               />
             </div>
+            <p className="text-xs text-slate-600">{t('progress.waitingRestart')}</p>
             {logPath && (
               <p className="text-xs text-slate-500 font-mono">{t('logLabel')}: {logPath}</p>
             )}
