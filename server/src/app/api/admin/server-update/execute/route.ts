@@ -63,15 +63,20 @@ export async function POST(request: NextRequest) {
     }
 
     // Clean old logs
-    updateChecker.cleanOldLogs()
+    try { updateChecker.cleanOldLogs() } catch (_e) { /* non-critical */ }
 
     const logFileName = `update-${Date.now()}.log`
     const logPath = path.join(logsDir, logFileName)
 
-    // Open synchronously so the fd is ready before spawn is called.
-    // fs.createWriteStream opens async — logStream.fd would be undefined
-    // when passed to spawn, causing a TypeError (→ 500).
-    const logFd = fs.openSync(logPath, 'w')
+    let logFd: number
+    try {
+      logFd = fs.openSync(logPath, 'w')
+    } catch (fsErr: any) {
+      return NextResponse.json(
+        { error: `Cannot create log file: ${fsErr.message}` },
+        { status: 500 }
+      )
+    }
 
     // Write header to log
     fs.writeSync(logFd, `ControlSphere Server Update Log\n`)
@@ -88,15 +93,28 @@ export async function POST(request: NextRequest) {
     })
 
     // Spawn detached update process
-    const child = spawn('bash', [scriptPath], {
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      cwd: installDir,
+    let child
+    try {
+      child = spawn('bash', [scriptPath], {
+        detached: true,
+        stdio: ['ignore', logFd, logFd],
+        cwd: installDir,
+      })
+    } catch (spawnErr: any) {
+      try { fs.closeSync(logFd) } catch (_e) { /* ignore */ }
+      return NextResponse.json(
+        { error: `Cannot spawn update process: ${spawnErr.message}` },
+        { status: 500 }
+      )
+    }
+
+    child.on('error', (err) => {
+      console.error('[server-update/execute] child process error:', err)
     })
     child.unref()
 
     // Close parent's copy of the fd — the child process keeps its own inherited copy
-    try { fs.closeSync(logFd) } catch { /* ignore */ }
+    try { fs.closeSync(logFd) } catch (_e) { /* ignore */ }
 
     return NextResponse.json(
       {
@@ -106,8 +124,11 @@ export async function POST(request: NextRequest) {
       },
       { status: 202 }
     )
-  } catch (error) {
+  } catch (error: any) {
     console.error('[server-update/execute] Error:', error)
-    return NextResponse.json({ error: 'Failed to start update' }, { status: 500 })
+    return NextResponse.json(
+      { error: `Failed to start update: ${error?.message || String(error)}` },
+      { status: 500 }
+    )
   }
 }
