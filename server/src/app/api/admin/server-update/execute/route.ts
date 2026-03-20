@@ -56,27 +56,38 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Prepare log file
-    const logsDir = path.join(installDir, 'logs')
-    if (!fs.existsSync(logsDir)) {
-      fs.mkdirSync(logsDir, { recursive: true })
-    }
+    // Prepare log file — try installDir/logs first, fall back to /tmp
+    const logFileName = `update-${Date.now()}.log`
+    const primaryLogsDir = path.join(installDir, 'logs')
+    const fallbackLogsDir = path.join('/tmp', 'controlsphere-logs')
 
-    // Clean old logs
+    // Clean old logs (non-critical)
     try { updateChecker.cleanOldLogs() } catch (_e) { /* non-critical */ }
 
-    const logFileName = `update-${Date.now()}.log`
-    const logPath = path.join(logsDir, logFileName)
-
+    let logPath: string
     let logFd: number
-    try {
-      logFd = fs.openSync(logPath, 'w')
-    } catch (fsErr: any) {
+
+    const tryOpenLog = (dir: string): number | null => {
+      try {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+        const p = path.join(dir, logFileName)
+        const fd = fs.openSync(p, 'w')
+        logPath = p
+        return fd
+      } catch {
+        return null
+      }
+    }
+
+    logPath = path.join(primaryLogsDir, logFileName) // set default so TS is happy
+    const fd = tryOpenLog(primaryLogsDir) ?? tryOpenLog(fallbackLogsDir)
+    if (fd === null) {
       return NextResponse.json(
-        { error: `Cannot create log file: ${fsErr.message}` },
+        { error: 'Cannot create log file: logs directory is not writable (tried installDir/logs and /tmp/controlsphere-logs)' },
         { status: 500 }
       )
     }
+    logFd = fd
 
     // Write header to log
     fs.writeSync(logFd, `ControlSphere Server Update Log\n`)

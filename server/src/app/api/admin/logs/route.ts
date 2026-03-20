@@ -6,32 +6,41 @@ import path from 'path'
 
 export const dynamic = 'force-dynamic'
 
-const LOGS_DIR = path.resolve(process.cwd(), '..', 'logs')
+// Primary location (bare-metal / writable Docker volume)
+const PRIMARY_LOGS_DIR = path.resolve(process.cwd(), '..', 'logs')
+// Fallback used when primary is read-only (e.g. EROFS in some Docker setups)
+const FALLBACK_LOGS_DIR = path.join('/tmp', 'controlsphere-logs')
+
+function readDir(dir: string): { name: string; size: number; modifiedAt: string }[] {
+  if (!fs.existsSync(dir)) return []
+  return fs.readdirSync(dir, { withFileTypes: true })
+    .filter((e) => e.isFile() && e.name.endsWith('.log'))
+    .map((e) => {
+      const stat = fs.statSync(path.join(dir, e.name))
+      return { name: e.name, size: stat.size, modifiedAt: stat.mtime.toISOString() }
+    })
+}
 
 /**
  * GET /api/admin/logs — List all log files (admin only)
+ * Merges files from primary logs dir and /tmp fallback (deduplicates by name).
  */
 export async function GET() {
   try {
     const session = await getSession()
     requireAdmin(session)
 
-    if (!fs.existsSync(LOGS_DIR)) {
-      return NextResponse.json({ files: [] })
+    const seen = new Set<string>()
+    const files: { name: string; size: number; modifiedAt: string }[] = []
+
+    for (const entry of [...readDir(PRIMARY_LOGS_DIR), ...readDir(FALLBACK_LOGS_DIR)]) {
+      if (!seen.has(entry.name)) {
+        seen.add(entry.name)
+        files.push(entry)
+      }
     }
 
-    const entries = fs.readdirSync(LOGS_DIR, { withFileTypes: true })
-    const files = entries
-      .filter((e) => e.isFile() && e.name.endsWith('.log'))
-      .map((e) => {
-        const stat = fs.statSync(path.join(LOGS_DIR, e.name))
-        return {
-          name: e.name,
-          size: stat.size,
-          modifiedAt: stat.mtime.toISOString(),
-        }
-      })
-      .sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime())
+    files.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime())
 
     return NextResponse.json({ files })
   } catch (error: any) {
