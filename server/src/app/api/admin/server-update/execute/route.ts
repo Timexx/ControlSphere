@@ -67,13 +67,17 @@ export async function POST(request: NextRequest) {
 
     const logFileName = `update-${Date.now()}.log`
     const logPath = path.join(logsDir, logFileName)
-    const logStream = fs.createWriteStream(logPath)
+
+    // Open synchronously so the fd is ready before spawn is called.
+    // fs.createWriteStream opens async — logStream.fd would be undefined
+    // when passed to spawn, causing a TypeError (→ 500).
+    const logFd = fs.openSync(logPath, 'w')
 
     // Write header to log
-    logStream.write(`ControlSphere Server Update Log\n`)
-    logStream.write(`Started: ${new Date().toISOString()}\n`)
-    logStream.write(`Triggered by: ${user.username}\n`)
-    logStream.write(`${'='.repeat(60)}\n\n`)
+    fs.writeSync(logFd, `ControlSphere Server Update Log\n`)
+    fs.writeSync(logFd, `Started: ${new Date().toISOString()}\n`)
+    fs.writeSync(logFd, `Triggered by: ${user.username}\n`)
+    fs.writeSync(logFd, `${'='.repeat(60)}\n\n`)
 
     // Audit log
     await createAuditEntry({
@@ -86,10 +90,13 @@ export async function POST(request: NextRequest) {
     // Spawn detached update process
     const child = spawn('bash', [scriptPath], {
       detached: true,
-      stdio: ['ignore', logStream, logStream],
+      stdio: ['ignore', logFd, logFd],
       cwd: installDir,
     })
     child.unref()
+
+    // Close parent's copy of the fd — the child process keeps its own inherited copy
+    try { fs.closeSync(logFd) } catch { /* ignore */ }
 
     return NextResponse.json(
       {
