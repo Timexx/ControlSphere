@@ -1034,6 +1034,7 @@ const messages = {
       description: 'Check for and apply ControlSphere updates from the official repository.',
       version: 'Version',
       buildSha: 'Build',
+      githubCommit: 'GitHub',
       lastChecked: 'Last checked',
       checkNow: 'Check now',
       checking: 'Checking...',

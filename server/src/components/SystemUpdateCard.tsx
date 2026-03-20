@@ -4,8 +4,10 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Download, RefreshCw, CheckCircle2, AlertTriangle, GitCommit,
-  ChevronDown, ChevronUp, X, Lock, Eye, EyeOff, FileText, Loader2
+  ChevronDown, ChevronUp, X, Lock, Eye, EyeOff, FileText, Loader2, ExternalLink
 } from 'lucide-react'
+
+const GITHUB_REPO_URL = 'https://github.com/Timexx/ControlSphere'
 import { useTranslations, useLocale } from 'next-intl'
 import { cn } from '@/lib/utils'
 
@@ -392,7 +394,7 @@ export default function SystemUpdateCard() {
                 <CheckCircle2 className="h-5 w-5 text-emerald-400" />
                 <span className="text-sm text-emerald-300 font-medium">{t('upToDate')}</span>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
                   <p className="text-[10px] uppercase tracking-wider text-slate-500">{t('version')}</p>
                   <p className="text-sm text-slate-200 font-mono">{data.currentVersion}</p>
@@ -401,6 +403,20 @@ export default function SystemUpdateCard() {
                   <p className="text-[10px] uppercase tracking-wider text-slate-500">{t('buildSha')}</p>
                   <p className="text-sm text-slate-200 font-mono">{data.currentSha}</p>
                 </div>
+                <a
+                  href={data.currentSha !== 'dev'
+                    ? `${GITHUB_REPO_URL}/commit/${data.currentSha}`
+                    : GITHUB_REPO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2 group hover:border-cyan-500/40 hover:bg-cyan-500/5 transition-colors"
+                >
+                  <p className="text-[10px] uppercase tracking-wider text-slate-500">{t('githubCommit')}</p>
+                  <p className="text-sm text-cyan-400 font-mono group-hover:text-cyan-300 flex items-center gap-1 transition-colors">
+                    {data.currentSha}
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                  </p>
+                </a>
               </div>
               {data.checkedAt && (
                 <p className="text-xs text-slate-500">
