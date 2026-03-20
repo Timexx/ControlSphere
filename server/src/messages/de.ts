@@ -1158,11 +1158,18 @@ const messages = {
     resetPassword: {
       button: 'Passwort zurücksetzen',
       title: 'Passwort zurücksetzen',
+      titleSelf: 'Eigenes Passwort ändern',
       confirm: 'Dies generiert ein neues Passwort und macht das alte ungültig. Fortfahren?',
       submit: 'Passwort zurücksetzen',
       resetting: 'Zurücksetzen...',
       success: 'Passwort wurde zurückgesetzt.',
       warning: 'Speichere dieses Passwort jetzt — es wird nur einmal angezeigt.',
+      newPassword: 'Neues Passwort',
+      confirmPassword: 'Passwort bestätigen',
+      passwordMismatch: 'Passwörter stimmen nicht überein.',
+      passwordTooShort: 'Das Passwort muss mindestens 8 Zeichen lang sein.',
+      setPassword: 'Passwort setzen',
+      setting: 'Wird gesetzt...',
     },
     deleteUser: {
       button: 'Löschen',

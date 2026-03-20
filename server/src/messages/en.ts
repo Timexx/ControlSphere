@@ -1158,11 +1158,18 @@ const messages = {
     resetPassword: {
       button: 'Reset password',
       title: 'Reset password',
+      titleSelf: 'Change your password',
       confirm: 'This will generate a new password and invalidate the old one. Continue?',
       submit: 'Reset password',
       resetting: 'Resetting...',
       success: 'Password has been reset.',
       warning: 'Save this password now — it will only be shown once.',
+      newPassword: 'New password',
+      confirmPassword: 'Confirm password',
+      passwordMismatch: 'Passwords do not match.',
+      passwordTooShort: 'Password must be at least 8 characters.',
+      setPassword: 'Set password',
+      setting: 'Setting...',
     },
     deleteUser: {
       button: 'Delete',

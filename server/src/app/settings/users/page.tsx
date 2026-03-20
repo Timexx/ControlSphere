@@ -280,10 +280,15 @@ export default function UserManagementPage() {
       {showResetModal && (
         <ResetPasswordModal
           user={showResetModal}
+          isSelf={showResetModal.id === currentUserId}
           onClose={() => setShowResetModal(null)}
           onReset={(password) => {
+            const wasSelf = showResetModal.id === currentUserId
+            const username = showResetModal.username
             setShowResetModal(null)
-            setShowPasswordModal({ username: showResetModal.username, password })
+            if (!wasSelf) {
+              setShowPasswordModal({ username, password })
+            }
           }}
         />
       )}
@@ -802,12 +807,20 @@ function MachineAccessModal({
 
 // ─── Reset Password Modal ────────────────────────────────────────────────────
 
+function generatePrePassword(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%&*'
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  return Array.from(bytes).map((b) => chars[b % chars.length]).join('')
+}
+
 function ResetPasswordModal({
   user,
+  isSelf,
   onClose,
   onReset,
 }: {
   user: UserItem
+  isSelf: boolean
   onClose: () => void
   onReset: (password: string) => void
 }) {
@@ -815,19 +828,38 @@ function ResetPasswordModal({
   const [resetting, setResetting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const [prePassword] = useState(() => generatePrePassword())
+  const [newPassword, setNewPassword] = useState(() => isSelf ? prePassword : '')
+  const [confirmPassword, setConfirmPassword] = useState(() => isSelf ? prePassword : '')
+
   async function handleReset() {
+    if (isSelf) {
+      if (newPassword.length < 8) {
+        setError(t('resetPassword.passwordTooShort'))
+        return
+      }
+      if (newPassword !== confirmPassword) {
+        setError(t('resetPassword.passwordMismatch'))
+        return
+      }
+    }
+
     setResetting(true)
     setError(null)
     try {
       const res = await fetch(`/api/admin/users/${user.id}/reset-password`, {
         method: 'POST',
+        ...(isSelf && {
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: newPassword }),
+        }),
       })
       const data = await res.json()
       if (!res.ok) {
         setError(data.error || t('errors.resetFailed'))
         return
       }
-      onReset(data.generatedPassword)
+      onReset(isSelf ? newPassword : data.generatedPassword)
     } catch {
       setError(t('errors.resetFailed'))
     } finally {
@@ -842,13 +874,44 @@ function ResetPasswordModal({
           <div className="h-12 w-12 rounded-full border border-amber-500/50 bg-amber-500/10 flex items-center justify-center mx-auto mb-3">
             <KeyRound className="h-6 w-6 text-amber-400" />
           </div>
-          <h3 className="text-lg font-semibold text-white">{t('resetPassword.title')}</h3>
+          <h3 className="text-lg font-semibold text-white">
+            {isSelf ? t('resetPassword.titleSelf') : t('resetPassword.title')}
+          </h3>
           <p className="text-sm text-slate-400 mt-1">{user.username}</p>
         </div>
 
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
-          <p className="text-xs text-amber-300">{t('resetPassword.confirm')}</p>
-        </div>
+        {isSelf ? (
+          <>
+            <div>
+              <label className="text-xs text-slate-400 font-medium block mb-1.5">
+                {t('resetPassword.newPassword')}
+              </label>
+              <input
+                type="text"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-[#070b11] px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:border-amber-500/60 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-400 font-medium block mb-1.5">
+                {t('resetPassword.confirmPassword')}
+              </label>
+              <input
+                type="text"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-700 bg-[#070b11] px-3 py-2 text-sm font-mono text-slate-200 placeholder-slate-600 focus:border-amber-500/60 focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                autoComplete="new-password"
+              />
+            </div>
+          </>
+        ) : (
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+            <p className="text-xs text-amber-300">{t('resetPassword.confirm')}</p>
+          </div>
+        )}
 
         {error && (
           <div className="flex items-center gap-2 text-rose-400 text-xs">
@@ -866,7 +929,10 @@ function ResetPasswordModal({
             disabled={resetting}
             className="flex-1 px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
-            {resetting ? t('resetPassword.resetting') : t('resetPassword.submit')}
+            {resetting
+              ? (isSelf ? t('resetPassword.setting') : t('resetPassword.resetting'))
+              : (isSelf ? t('resetPassword.setPassword') : t('resetPassword.submit'))
+            }
           </button>
         </div>
       </div>
