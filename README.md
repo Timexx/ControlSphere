@@ -1,10 +1,16 @@
-# ControlSphere ![Beta](https://img.shields.io/badge/status-beta-orange) ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+# ControlSphere
+
+[![Beta](https://img.shields.io/badge/status-beta-orange)](https://github.com/timexx/controlsphere)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](http://www.apache.org/licenses/LICENSE-2.0)
+[![GitHub stars](https://img.shields.io/github/stars/timexx/controlsphere?style=social)](https://github.com/timexx/controlsphere/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/timexx/controlsphere)](https://github.com/timexx/controlsphere/commits/main)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/timexx/controlsphere/pulls)
 
 **Your entire infrastructure. One dashboard. Zero complexity.**
 
-ControlSphere gives you real-time visibility and full control over all your **Linux and Windows systems** — from a single, open-source web interface. Monitor live metrics, run terminal sessions, scan for CVEs, and manage packages across dozens of servers simultaneously. No SaaS subscriptions. No vendor lock-in. Runs entirely on your own hardware.
+Monitor, control, and secure all your **Linux and Windows servers** from a single open-source web interface. Live metrics, browser terminal, CVE scanning, fleet management — no SaaS, no vendor lock-in, runs entirely on your own hardware.
 
-Born from the need to manage servers without the cost of large operators, and made fully available under the Apache 2.0 licence so every company and organisation can deploy, adapt, and benefit freely.
+> ⭐ If ControlSphere saves you money, a star helps more people find it.
 
 ---
 
@@ -32,12 +38,12 @@ Born from the need to manage servers without the cost of large operators, and ma
 
 | | ControlSphere | Typical SaaS tools |
 |---|---|---|
-| Cost | Free, self-hosted | $50–$500 / month |
-| Data ownership | 100% yours | Vendor's servers |
-| CVE scanning | Built-in, offline | Add-on or missing |
-| Agent footprint | Single Go binary | Heavy daemons |
-| Setup time | ~2 minutes | Hours of config |
-| Open source | Apache 2.0 | Rarely |
+| Cost | ✅ Free, self-hosted | ❌ $50–$500 / month |
+| Data ownership | ✅ 100% yours | ❌ Vendor's servers |
+| CVE scanning | ✅ Built-in, offline | ⚠️ Add-on or missing |
+| Agent footprint | ✅ Single Go binary | ❌ Heavy daemons |
+| **Setup time** | ✅ **~2 minutes** | ❌ Hours of config |
+| Open source | ✅ Apache 2.0 | ❌ Rarely |
 
 ---
 
@@ -133,20 +139,6 @@ sudo systemctl stop controlsphere      # stop
 sudo journalctl -u controlsphere -f    # view logs
 ```
 
-**Update the system:**
-```bash
-cd /path/to/controlsphere
-chmod +x update-system.sh  # Make executable (only needed once)
-./update-system.sh
-```
-
-The update script automatically:
-- ✅ Clones or pulls the latest version from GitHub
-- ✅ Creates a backup of your current installation
-- ✅ Deletes old agent binaries (from bin/ and download/ directories)
-- ✅ Runs `setup-server.sh` to update the server
-- ✅ Rebuilds all agent binaries automatically
-
 ---
 
 ### 🤖 Adding systems (agents)
@@ -205,6 +197,7 @@ The agent installs itself as a system service and the system appears in your das
 - JWT-based authentication
 - Auto-discovery — agents register themselves on first connect
 - Zero-config agent — single static binary, no external dependencies
+- **One-click server updates** — check and apply new versions directly from the web UI, no SSH required
 - German and English UI
 
 ---
@@ -263,11 +256,6 @@ GOOS=linux GOARCH=amd64 go build -o maintainer-agent-linux-amd64
 GOOS=linux GOARCH=arm64 go build -o maintainer-agent-linux-arm64
 ```
 
-**Rebuild and deploy agents**
-```bash
-./rebuild-and-deploy-agents.sh
-```
-
 ---
 
 ## Architecture
@@ -285,16 +273,17 @@ Browser  ──WebSocket──►  Next.js Server (Node.js)  ◄──WebSocket�
 
 ## Roadmap
 
-- [x] Real-time monitoring dashboard
-- [x] Remote terminal (PTY, encrypted, audit-logged)
-- [x] Bulk operations across fleet
-- [x] CVE scanning with CSV export
-- [x] Historical metric charts
-- [x] Package security scanner
-- [x] Port monitoring
-- [x] Audit logging
-- [x] Multi-user support with roles
-- [ ] Alert system (email / Slack / webhook for threshold events)
+- [x] Real-time monitoring dashboard *(Feb 2026)*
+- [x] Remote terminal — PTY, encrypted, audit-logged *(Feb 2026)*
+- [x] CVE scanning with CSV export *(Feb 2026)*
+- [x] Linux & Windows package scanning *(Feb 2026)*
+- [x] Port monitoring across fleet *(Feb 2026)*
+- [x] Historical metric charts *(Feb 2026)*
+- [x] Bulk operations — update / run commands on multiple servers at once *(Feb 2026)*
+- [x] Multi-user support with roles *(Feb 2026)*
+- [x] Audit logging *(Feb 2026)*
+- [x] One-click server updates from the web UI *(Mar 2026)*
+- [ ] Alert system — email / Slack / webhook on threshold events
 - [ ] File manager
 - [ ] Custom scripts library
 
