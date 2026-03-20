@@ -25,7 +25,11 @@ init_log() {
   local timestamp
   timestamp="$(date '+%Y-%m-%d_%H%M%S')"
 
-  mkdir -p "$LOG_DIR"
+  mkdir -p "$LOG_DIR" 2>/dev/null || sudo mkdir -p "$LOG_DIR"
+  # If the logs directory was created by root in a prior sudo run, fix ownership
+  if [ ! -w "$LOG_DIR" ] && command -v sudo >/dev/null 2>&1; then
+    sudo chown "$(id -u):$(id -g)" "$LOG_DIR"
+  fi
   LOG_FILE="$LOG_DIR/${prefix}-${timestamp}.log"
   _LOG_START_SECONDS="$SECONDS"
 
