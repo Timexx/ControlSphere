@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { stateCache } from '@/lib/state-cache'
 import { getSession } from '@/lib/auth'
 import { canAccessMachine } from '@/lib/authorization'
-import { createAuditEntry } from '@/lib/audit'
+import { createAuditEntry, AuditActions } from '@/lib/audit'
 
 export async function DELETE(
   request: NextRequest,
@@ -32,6 +32,12 @@ export async function DELETE(
       }
     }
 
+    // Fetch hostname before deletion for audit/notification
+    const machineToDelete = await prisma.machine.findUnique({
+      where: { id },
+      select: { hostname: true, ip: true },
+    })
+
     // Delete all metrics first (foreign key constraint)
     await prisma.metric.deleteMany({
       where: { machineId: id }
@@ -40,6 +46,18 @@ export async function DELETE(
     // Delete the machine
     await prisma.machine.delete({
       where: { id }
+    })
+
+    // Emit audit entry (triggers notification-service machineDeleted event)
+    await createAuditEntry({
+      action: AuditActions.MACHINE_DELETED,
+      userId: userId ?? null,
+      severity: 'warn',
+      details: {
+        machineId: id,
+        hostname: machineToDelete?.hostname ?? id,
+        ip: machineToDelete?.ip ?? null,
+      },
     })
 
     // Remove from cache

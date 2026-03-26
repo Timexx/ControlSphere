@@ -224,6 +224,9 @@ export class AgentConnectionManager {
               status: 'offline'
             })
 
+            // Emit machine_offline event for notification service (email alerts)
+            realtimeEvents.emit('machine_offline', { machineId: machine.id, hostname: machine.hostname })
+
             this.logger.info('MachineMarkedOffline', {
               machineId: machine.id,
               hostname: machine.hostname,
@@ -369,9 +372,15 @@ export class AgentConnectionManager {
           this.logger.error('OrchestratorDisconnectFailed', { error: (err as Error).message })
         }
         try {
-          await this.prisma.machine.update({ where: { id: machineId }, data: { status: 'offline' } })
+          const machine = await this.prisma.machine.update({
+            where: { id: machineId },
+            data: { status: 'offline' },
+            select: { hostname: true },
+          })
           stateCache.setOffline(machineId)
           this.broadcast({ type: 'machine_status_changed', machineId, status: 'offline' })
+          // Emit notification event for machine going offline
+          realtimeEvents.emit('machine_offline', { machineId, hostname: machine.hostname })
         } catch (error) {
           this.logger.error('AgentDisconnectUpdateFailed', { error: (error as Error).message })
         }
@@ -464,6 +473,8 @@ export class AgentConnectionManager {
         osInfo: machine.osInfo, status: machine.status, lastSeen: machine.lastSeen,
         notes: (machine as any).notes ?? null, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
       })
+      // Emit notification event for new agent registration
+      realtimeEvents.emit('agent_registered', { machineId: machine.id, hostname: machine.hostname })
     }      if (ws) {
         ws.send(JSON.stringify({ type: 'registered', machineId: machine.id }))
       }

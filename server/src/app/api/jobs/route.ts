@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { orchestrator } from '@/lib/orchestrator'
 import { getSession } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { createAuditEntry, AuditActions } from '@/lib/audit'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,27 +68,17 @@ export async function POST(request: NextRequest) {
     // Audit log for bulk job creation (skip dry-run)
     if (!body.dryRun) {
       try {
-        const session = await getSession()
-        const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown'
-        const userAgent = request.headers.get('user-agent') || 'unknown'
-
-        await prisma.auditLog.create({
-          data: {
-            action: 'BULK_JOB_CREATED',
-            eventType: 'bulk_operation',
-            userId: session?.user?.id || null,
-            severity: 'info',
-            details: JSON.stringify({
-              jobId: result.id,
-              command: payload.command,
-              mode: payload.mode,
-              targetType: payload.targetType,
-              targetCount: result.totalTargets || machineIds.length,
-              strategy: payload.strategy,
-              ip,
-              userAgent
-            })
-          } as any
+        await createAuditEntry({
+          action: AuditActions.BULK_JOB_CREATED,
+          userId: session.user.id,
+          severity: 'info',
+          details: {
+            jobId: result.id,
+            command: payload.command,
+            mode: payload.mode,
+            targetType: payload.targetType,
+            targetCount: result.totalTargets || machineIds.length,
+          },
         })
       } catch (err) {
         console.error('Audit log failed for bulk job creation:', err)

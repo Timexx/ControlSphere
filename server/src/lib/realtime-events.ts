@@ -28,6 +28,7 @@ interface RealtimeEventBus {
   emitSecurityEventsResolved(machineId: string, resolvedCount: number): void
   emitUpdateAvailable(info: { latestSha: string; aheadBy: number }): void
   on(event: string, listener: (...args: unknown[]) => void): this
+  removeListener(event: string, listener: (...args: unknown[]) => void): this
   emit(event: string, ...args: unknown[]): boolean
 }
 

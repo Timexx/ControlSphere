@@ -16,6 +16,7 @@ import { startCveMirrorService } from './services/cve-mirror'
 import { stateCache } from './lib/state-cache'
 import { updateChecker } from './lib/update-checker'
 import { realtimeEvents } from './lib/realtime-events'
+import { notificationService } from './lib/notification-service'
 
 const dev = process.env.NODE_ENV !== 'production'
 const hostname = process.env.HOSTNAME || '0.0.0.0'
@@ -69,6 +70,9 @@ async function bootstrap(): Promise<void> {
 
   // Start periodic update checker (checks GitHub every 6h, first check after 30s)
   updateChecker.startPeriodicCheck()
+
+  // Initialize notification service (email alerts for system events)
+  notificationService.initialize()
 
   // Broadcast update availability to all web clients
   realtimeEvents.on('update_available', (data: unknown) => {

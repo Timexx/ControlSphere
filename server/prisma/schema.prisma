@@ -392,3 +392,45 @@ model ServerConfig {
   updateDismissedSha  String?  // SHA dismissed by admin — badge hidden until newer commit
   updatedAt           DateTime @updatedAt
 }
+
+model NotificationConfig {
+  id              String   @id @default("global")
+
+  // SMTP provider
+  smtpHost        String?
+  smtpPort        Int      @default(587)
+  smtpUsername    String?
+  smtpPassword    String?  // AES-256-GCM encrypted via SecretEncryptionService
+  smtpFromEmail   String?
+  smtpFromName    String   @default("ControlSphere")
+  smtpTls         Boolean  @default(true)
+  smtpVerifyCert  Boolean  @default(true)
+
+  // Recipients — comma-separated email addresses
+  recipientEmails String   @default("")
+
+  // Per-event delivery settings — JSON: Record<string, 'immediate'|'digest'|'off'>
+  eventSettings   String   @default("{}")
+
+  // Daily digest schedule
+  digestEnabled   Boolean  @default(false)
+  digestHour      Int      @default(8)          // 0–23, server local time
+  digestMinute    Int      @default(0)          // 0–59
+  digestDays      String   @default("1,2,3,4,5") // weekdays: 0=Sun … 6=Sat
+
+  // Global on/off switch
+  enabled         Boolean  @default(false)
+
+  updatedAt       DateTime @updatedAt
+}
+
+model NotificationLog {
+  id          String   @id @default(cuid())
+  event       String
+  subject     String
+  recipients  String
+  status      String   // 'sent' | 'failed'
+  error       String?  @db.Text
+  machineId   String?
+  createdAt   DateTime @default(now())
+}

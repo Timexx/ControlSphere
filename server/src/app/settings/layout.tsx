@@ -3,17 +3,18 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { Settings, Download, Users, FileText } from 'lucide-react'
+import { Settings, Download, Users, FileText, Bell } from 'lucide-react'
 import AppShell from '@/components/AppShell'
 import AddAgentModal from '@/components/AddAgentModal'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
 
 const tabs = [
-  { href: '/settings',        icon: Settings,  labelKey: 'tabs.general' as const },
-  { href: '/settings/users',  icon: Users,     labelKey: 'tabs.users'   as const },
-  { href: '/settings/logs',   icon: FileText,  labelKey: 'tabs.logs'    as const },
-  { href: '/settings/update', icon: Download,  labelKey: 'tabs.update'  as const },
+  { href: '/settings',               icon: Settings,  labelKey: 'tabs.general'        as const },
+  { href: '/settings/users',         icon: Users,     labelKey: 'tabs.users'           as const },
+  { href: '/settings/notifications', icon: Bell,      labelKey: 'tabs.notifications'   as const },
+  { href: '/settings/logs',          icon: FileText,  labelKey: 'tabs.logs'            as const },
+  { href: '/settings/update',        icon: Download,  labelKey: 'tabs.update'          as const },
 ]
 
 export default function SettingsLayout({ children }: { children: React.ReactNode }) {

@@ -49,6 +49,8 @@ export async function createAuditEntry(entry: AuditEntry): Promise<void> {
     })
 
     // Broadcast to connected WebSocket clients
+    const listenerCount = (realtimeEvents as any).listenerCount?.('audit_log') ?? '?'
+    console.log(`[audit] emitting audit_log: action=${log.action} listeners=${listenerCount}`)
     realtimeEvents.emitAuditLog(machineId ?? '', {
       id: log.id,
       action: log.action,
@@ -76,6 +78,7 @@ export const AuditActions = {
   USER_MACHINE_ACCESS_UPDATED: 'USER_MACHINE_ACCESS_UPDATED',
   USER_LOGIN_BLOCKED: 'USER_LOGIN_BLOCKED',
   MACHINE_ACCESS_DENIED: 'MACHINE_ACCESS_DENIED',
+  MACHINE_DELETED: 'MACHINE_DELETED',
 
   // Existing actions
   LOGIN: 'LOGIN',
