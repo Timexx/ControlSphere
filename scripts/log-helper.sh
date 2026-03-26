@@ -30,7 +30,13 @@ init_log() {
   if [ ! -w "$LOG_DIR" ] && command -v sudo >/dev/null 2>&1; then
     sudo chown "$(id -u):$(id -g)" "$LOG_DIR"
   fi
-  LOG_FILE="$LOG_DIR/${prefix}-${timestamp}.log"
+
+  # Allow the caller (e.g. server execute route) to specify the log path
+  if [ -n "$CS_UPDATE_LOG" ]; then
+    LOG_FILE="$CS_UPDATE_LOG"
+  else
+    LOG_FILE="$LOG_DIR/${prefix}-${timestamp}.log"
+  fi
   _LOG_START_SECONDS="$SECONDS"
 
   # Write header directly to the logfile

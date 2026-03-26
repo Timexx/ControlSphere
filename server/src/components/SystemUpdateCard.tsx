@@ -181,7 +181,7 @@ export default function SystemUpdateCard() {
     if (pollRef.current) clearInterval(pollRef.current)
     let elapsed = 0
     const POLL_INTERVAL = 3000
-    const TIMEOUT = 120_000
+    const TIMEOUT = 300_000
 
     pollRef.current = setInterval(async () => {
       elapsed += POLL_INTERVAL

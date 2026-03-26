@@ -56,7 +56,9 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Prepare log file — try installDir/logs first, fall back to /tmp
+    // Prepare log path — log-helper.sh handles the actual file creation.
+    // We pass the desired path via CS_UPDATE_LOG env var so both the
+    // execute route and the script agree on the same file.
     const logFileName = `update-${Date.now()}.log`
     const primaryLogsDir = path.join(installDir, 'logs')
     const fallbackLogsDir = path.join('/tmp', 'controlsphere-logs')
@@ -64,36 +66,25 @@ export async function POST(request: NextRequest) {
     // Clean old logs (non-critical)
     try { updateChecker.cleanOldLogs() } catch (_e) { /* non-critical */ }
 
-    let logPath: string
-    let logFd: number
-
-    const tryOpenLog = (dir: string): number | null => {
+    // Ensure the logs directory exists
+    let logsDir = primaryLogsDir
+    try {
+      if (!fs.existsSync(primaryLogsDir)) fs.mkdirSync(primaryLogsDir, { recursive: true })
+      // Test writability
+      fs.accessSync(primaryLogsDir, fs.constants.W_OK)
+    } catch {
       try {
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-        const p = path.join(dir, logFileName)
-        const fd = fs.openSync(p, 'w')
-        logPath = p
-        return fd
+        if (!fs.existsSync(fallbackLogsDir)) fs.mkdirSync(fallbackLogsDir, { recursive: true })
+        logsDir = fallbackLogsDir
       } catch {
-        return null
+        return NextResponse.json(
+          { error: 'Cannot create log directory (tried installDir/logs and /tmp/controlsphere-logs)' },
+          { status: 500 }
+        )
       }
     }
 
-    logPath = path.join(primaryLogsDir, logFileName) // set default so TS is happy
-    const fd = tryOpenLog(primaryLogsDir) ?? tryOpenLog(fallbackLogsDir)
-    if (fd === null) {
-      return NextResponse.json(
-        { error: 'Cannot create log file: logs directory is not writable (tried installDir/logs and /tmp/controlsphere-logs)' },
-        { status: 500 }
-      )
-    }
-    logFd = fd
-
-    // Write header to log
-    fs.writeSync(logFd, `ControlSphere Server Update Log\n`)
-    fs.writeSync(logFd, `Started: ${new Date().toISOString()}\n`)
-    fs.writeSync(logFd, `Triggered by: ${user.username}\n`)
-    fs.writeSync(logFd, `${'='.repeat(60)}\n\n`)
+    const logPath = path.join(logsDir, logFileName)
 
     // Audit log
     await createAuditEntry({
@@ -103,16 +94,17 @@ export async function POST(request: NextRequest) {
       details: { logPath, triggeredBy: user.username },
     })
 
-    // Spawn detached update process
+    // Spawn detached update process — log-helper.sh handles file logging
+    // via the CS_UPDATE_LOG env var so both sides use the same path.
     let child
     try {
       child = spawn('bash', [scriptPath], {
         detached: true,
-        stdio: ['ignore', logFd, logFd],
+        stdio: 'ignore',
         cwd: installDir,
+        env: { ...process.env, CS_UPDATE_LOG: logPath },
       })
     } catch (spawnErr: any) {
-      try { fs.closeSync(logFd) } catch (_e) { /* ignore */ }
       return NextResponse.json(
         { error: `Cannot spawn update process: ${spawnErr.message}` },
         { status: 500 }
@@ -123,9 +115,6 @@ export async function POST(request: NextRequest) {
       console.error('[server-update/execute] child process error:', err)
     })
     child.unref()
-
-    // Close parent's copy of the fd — the child process keeps its own inherited copy
-    try { fs.closeSync(logFd) } catch (_e) { /* ignore */ }
 
     return NextResponse.json(
       {

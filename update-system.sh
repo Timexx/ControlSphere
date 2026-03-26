@@ -1,5 +1,6 @@
 #!/bin/bash
-set -e
+# NOTE: Do NOT use "set -e" here — the agent build (step 4) may fail
+# on machines without Go installed, and the server must still restart.
 
 # Colors
 GREEN='\033[0;32m'
@@ -143,8 +144,10 @@ if [ -f "setup-server.sh" ]; then
         echo -e "${GREEN}✓ File permissions fixed${NC}"
     fi
 else
-    echo -e "${RED}✗ setup-server.sh not found!${NC}"
-    exit 1
+    echo -e "${YELLOW}⚠ setup-server.sh not found – running npm install + build manually...${NC}"
+    (cd server && npm install --omit=dev 2>&1 && npm run build 2>&1) || {
+        echo -e "${RED}✗ Manual server build failed${NC}"
+    }
 fi
 
 # ── Step 6: Ensure service is running ─────────────────────────────────────
