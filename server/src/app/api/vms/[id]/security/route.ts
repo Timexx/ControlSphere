@@ -3,43 +3,12 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getScanProgress } from '@/lib/scan-progress-store'
 
-// Helper function to deduplicate events - keeps only the newest event per source_ip for failed_auth
-function deduplicateEvents(events: any[]): any[] {
-  const seenSourceIps = new Map<string, any>()
-  const result: any[] = []
-  
-  for (const event of events) {
-    // For failed_auth events, deduplicate by source_ip (regardless of status)
-    if (event.type === 'failed_auth') {
-      try {
-        const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-        const sourceIp = data?.source_ip
-        
-        if (sourceIp) {
-          // Keep only the first (newest) event for each source_ip
-          if (!seenSourceIps.has(sourceIp)) {
-            seenSourceIps.set(sourceIp, event)
-            result.push(event)
-          }
-          continue
-        }
-      } catch {
-        // If we can't parse, include the event
-      }
-    }
-    
-    // Include all other event types
-    result.push(event)
-  }
-  
-  return result
-}
-
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+
   try {
     const machine = await prisma.machine.findUnique({
       where: { id },
@@ -50,11 +19,13 @@ export async function GET(
       return NextResponse.json({ error: 'Machine not found' }, { status: 404 })
     }
 
-    const [rawEvents, auditLogs, lastScan, ports, vulnerabilities] = await Promise.all([
+    const [events, openEventCount, auditLogs, lastScan, ports, vulnerabilities] = await Promise.all([
       prisma.securityEvent.findMany({
         where: { machineId: id },
         orderBy: { createdAt: 'desc' },
-        take: 100 // Fetch more to account for deduplication
+      }),
+      prisma.securityEvent.count({
+        where: { machineId: id, status: { in: ['open', 'ack'] } },
       }),
       prisma.auditLog.findMany({
         where: { machineId: id },
@@ -78,6 +49,7 @@ export async function GET(
         }
       })
     ])
+
     let scanProgress = getScanProgress(id)
     if (!scanProgress) {
       const dbProgress = await prisma.scanProgressState.findUnique({
@@ -94,13 +66,9 @@ export async function GET(
       }
     }
 
-    // Deduplicate events - keeps only newest event per source_ip for failed_auth
-    const events = deduplicateEvents(rawEvents).slice(0, 50)
-    const openEvents = events.filter((e) => e.status === 'open' || e.status === 'ack').length
-
     return NextResponse.json({
       machine,
-      openEvents,
+      openEvents: openEventCount,
       events,
       auditLogs,
       lastScan,

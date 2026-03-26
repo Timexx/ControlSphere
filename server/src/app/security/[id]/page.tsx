@@ -41,6 +41,17 @@ type SecurityEvent = {
   createdAt: string
 }
 
+type EventGroup = {
+  key: string
+  type: string
+  severity: string
+  messagePrefix: string
+  count: number
+  latestCreatedAt: string
+  latestStatus: string
+  allEvents: SecurityEvent[]
+}
+
 type AuditLog = {
   id: string
   action: string
@@ -157,6 +168,37 @@ function parseIsWindows(osInfoRaw: string | null | undefined): boolean {
   }
 }
 
+function groupEvents(events: SecurityEvent[]): EventGroup[] {
+  const map = new Map<string, EventGroup>()
+  for (const evt of events) {
+    const prefix = evt.message.split(':')[0].trim()
+    const key = `${evt.type}::${evt.severity}::${prefix}`
+    const existing = map.get(key)
+    if (existing) {
+      existing.count++
+      existing.allEvents.push(evt)
+      if (evt.createdAt > existing.latestCreatedAt) {
+        existing.latestCreatedAt = evt.createdAt
+        existing.latestStatus = evt.status
+      }
+    } else {
+      map.set(key, {
+        key,
+        type: evt.type,
+        severity: evt.severity,
+        messagePrefix: prefix,
+        count: 1,
+        latestCreatedAt: evt.createdAt,
+        latestStatus: evt.status,
+        allEvents: [evt],
+      })
+    }
+  }
+  return [...map.values()].sort((a, b) =>
+    b.latestCreatedAt.localeCompare(a.latestCreatedAt)
+  )
+}
+
 export default function VMSecurityDetailPage() {
   const params = useParams()
   const machineId = params?.id as string
@@ -188,6 +230,8 @@ export default function VMSecurityDetailPage() {
   const [, forceUpdate] = useState(0) // For timestamp refresh
   const [toasts, setToasts] = useState<Array<{ id: number; message: string; tone: 'success' | 'error' | 'info' }>>([])
   const [etaCountdown, setEtaCountdown] = useState<number | null>(null)
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [expandedAllGroups, setExpandedAllGroups] = useState<Set<string>>(new Set())
 
   // Derived: detect OS and get OS-appropriate handbook content
   const isWindows = useMemo(() => parseIsWindows(meta.osInfo), [meta.osInfo])
@@ -265,6 +309,8 @@ export default function VMSecurityDetailPage() {
 
       if (securityRes.ok && securityData) {
         setEvents(securityData.events || [])
+        setExpandedGroups(new Set())
+        setExpandedAllGroups(new Set())
         setAuditLogs(securityData.auditLogs || [])
         setPorts(securityData.ports || [])
         setVulnerabilities(
@@ -355,7 +401,7 @@ export default function VMSecurityDetailPage() {
                   ...m,
                   openEvents: m.openEvents + 1
                 }))
-                return [data.event, ...prev].slice(0, 50)
+                return [data.event, ...prev]
               })
             }
             
@@ -452,20 +498,22 @@ export default function VMSecurityDetailPage() {
     return { critical, high, medium, total: vulnerabilities.length }
   }, [vulnerabilities])
 
-  // Filter security events by severity level
-  const filteredEvents = useMemo(() => {
-    if (severityFilter === 'all') return events
+  // Group events and apply severity filter on group level
+  const groupedEvents = useMemo(() => groupEvents(events), [events])
+
+  const filteredGroups = useMemo(() => {
+    if (severityFilter === 'all') return groupedEvents
     if (severityFilter === 'high-only') {
-      return events.filter((e) => e.severity === 'high' || e.severity === 'critical')
+      return groupedEvents.filter((g) => g.severity === 'high' || g.severity === 'critical')
     }
     // 'important' = high + medium + critical (hide low)
-    return events.filter((e) => e.severity !== 'low')
-  }, [events, severityFilter])
+    return groupedEvents.filter((g) => g.severity !== 'low')
+  }, [groupedEvents, severityFilter])
 
-  // Count of hidden low-severity events
+  // Count of hidden low-severity events (by group)
   const hiddenLowCount = useMemo(() => {
-    return events.filter((e) => e.severity === 'low').length
-  }, [events])
+    return groupedEvents.filter((g) => g.severity === 'low').reduce((s, g) => s + g.count, 0)
+  }, [groupedEvents])
 
   const downloadPackagesCSV = () => {
     const timestamp = new Date().toISOString().replace('T', ' ').substring(0, 19)
@@ -966,34 +1014,119 @@ export default function VMSecurityDetailPage() {
                       )}
                     </div>
 
-                    {filteredEvents.length === 0 ? (
+                    {filteredGroups.length === 0 ? (
                       <p className="text-sm text-slate-500 text-center py-4">
                         {t('filters.noMatch')}
                       </p>
                     ) : (
-                      filteredEvents.map((evt) => (
-                        <div
-                          key={evt.id}
-                          className={`rounded-lg border p-3 flex items-start gap-3 overflow-hidden ${
-                            evt.status === 'resolved' 
-                              ? 'border-slate-800/50 bg-[#0C121A]/40 opacity-60' 
-                              : 'border-slate-800 bg-[#0C121A]/80'
-                          }`}
-                        >
-                          <SeverityPill severity={evt.severity} />
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-medium break-all ${evt.status === 'resolved' ? 'text-slate-400' : 'text-white'}`}>
-                              {evt.message}
-                            </p>
-                            <p className="text-xs text-slate-400">
-                              {evt.type} • {formatDistanceToNow(new Date(evt.createdAt), { locale: dateLocale })} ago • 
-                              <span className={evt.status === 'resolved' ? 'text-emerald-400' : 'text-amber-400'}>
-                                {' '}{evt.status === 'resolved' ? '✓ Read' : evt.status}
-                              </span>
-                            </p>
-                          </div>
-                        </div>
-                      ))
+                      <>
+                        {filteredGroups.map((group) => {
+                          const isExpanded = expandedGroups.has(group.key)
+                          const isResolved = group.latestStatus === 'resolved'
+                          const toggleExpand = () => setExpandedGroups(prev => {
+                            const next = new Set(prev)
+                            if (next.has(group.key)) next.delete(group.key)
+                            else next.add(group.key)
+                            return next
+                          })
+                          return (
+                            <div
+                              key={group.key}
+                              className={`rounded-lg border overflow-hidden ${
+                                isResolved
+                                  ? 'border-slate-800/50 bg-[#0C121A]/40 opacity-60'
+                                  : 'border-slate-800 bg-[#0C121A]/80'
+                              }`}
+                            >
+                              {/* Group header row */}
+                              <div className="p-3 flex items-start gap-3">
+                                <SeverityPill severity={group.severity} />
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-sm font-medium break-all ${isResolved ? 'text-slate-400' : 'text-white'}`}>
+                                    {group.messagePrefix}
+                                    {group.count > 1 && (
+                                      <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-700 text-slate-300">
+                                        ×{group.count}
+                                      </span>
+                                    )}
+                                  </p>
+                                  <p className="text-xs text-slate-400">
+                                    {group.type} • {formatDistanceToNow(new Date(group.latestCreatedAt), { locale: dateLocale })} ago •{' '}
+                                    <span className={isResolved ? 'text-emerald-400' : 'text-amber-400'}>
+                                      {isResolved ? '✓ Read' : group.latestStatus}
+                                    </span>
+                                  </p>
+                                </div>
+                                {group.count > 1 && (
+                                  <button
+                                    onClick={toggleExpand}
+                                    className="shrink-0 text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1 transition-colors"
+                                  >
+                                    {isExpanded ? (
+                                      <><ChevronUp className="h-3 w-3" />{t('pagination.groupCollapse')}</>
+                                    ) : (
+                                      <><ChevronDown className="h-3 w-3" />{t('pagination.groupExpand')}</>
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                              {/* Expanded events */}
+                              {isExpanded && group.allEvents.length > 0 && (
+                                <div className="border-t border-slate-800/60 divide-y divide-slate-800/40">
+                                  {(() => {
+                                    const showAll = expandedAllGroups.has(group.key)
+                                    const visible = showAll ? group.allEvents : group.allEvents.slice(0, 3)
+                                    const remaining = group.allEvents.length - 3
+                                    return (
+                                      <>
+                                        {visible.map((evt) => (
+                                          <div key={evt.id} className="px-3 py-2 pl-11">
+                                            <p className="text-xs text-slate-300 break-all leading-relaxed">
+                                              → {evt.message}
+                                            </p>
+                                            <p className="text-[10px] text-slate-500 mt-0.5">
+                                              {formatDistanceToNow(new Date(evt.createdAt), { locale: dateLocale })} ago
+                                            </p>
+                                          </div>
+                                        ))}
+                                        {!showAll && remaining > 0 && (
+                                          <div className="px-3 py-2 pl-11">
+                                            <button
+                                              onClick={() => setExpandedAllGroups(prev => {
+                                                const next = new Set(prev)
+                                                next.add(group.key)
+                                                return next
+                                              })}
+                                              className="text-xs text-cyan-400 hover:text-cyan-200 transition-colors underline underline-offset-2"
+                                            >
+                                              … und {remaining} weitere anzeigen
+                                            </button>
+                                          </div>
+                                        )}
+                                        {showAll && group.allEvents.length > 3 && (
+                                          <div className="px-3 py-2 pl-11">
+                                            <button
+                                              onClick={() => setExpandedAllGroups(prev => {
+                                                const next = new Set(prev)
+                                                next.delete(group.key)
+                                                return next
+                                              })}
+                                              className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                                            >
+                                              Weniger anzeigen
+                                            </button>
+                                          </div>
+                                        )}
+                                      </>
+                                    )
+                                  })()}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+
+                      </>
                     )}
                   </div>
                 )}

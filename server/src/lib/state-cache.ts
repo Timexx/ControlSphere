@@ -257,15 +257,12 @@ export async function refreshSecurityCacheForMachine(
     select: { severity: true },
   })
 
-  // For badge/counter: only count important events (medium+high+critical)
-  const importantEvents = openEvents.filter(e => e.severity !== 'low')
-
   let highest: string | null = null
-  for (const evt of importantEvents) {
+  for (const evt of openEvents) {
     if (highest === null || (sevOrder[evt.severity] ?? 0) > (sevOrder[highest] ?? 0)) {
       highest = evt.severity
     }
   }
 
-  stateCache.refreshSecurityEvents(machineId, importantEvents.length, highest)
+  stateCache.refreshSecurityEvents(machineId, openEvents.length, highest)
 }

@@ -638,6 +638,13 @@ const messages = {
       hiddenLow: 'low-priority hidden',
       noMatch: 'No events match the current filter.'
     },
+    pagination: {
+      loadMore: 'Load more events',
+      loadingMore: 'Loading...',
+      groupCount: '×{count}',
+      groupExpand: 'Show examples',
+      groupCollapse: 'Collapse',
+    },
     liveScan: {
       running: 'Scan running...',
       eta: 'ETA {seconds}s'
