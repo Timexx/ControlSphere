@@ -453,7 +453,7 @@ export function renderImmediateEmail(opts: {
   if (severity)    rows.push({ label: s.rowSeverity, value: severity.toUpperCase() })
   if (extra) {
     for (const [k, v] of Object.entries(extra)) {
-      rows.push({ label: k, value: v })
+      rows.push({ label: k, value: String(v) })
     }
   }
 
@@ -549,7 +549,7 @@ export function renderDigestEmail(opts: {
       if (item.machineName) rows.push({ label: s.rowMachine, value: item.machineName })
       if (item.severity)    rows.push({ label: s.rowSeverity, value: item.severity.toUpperCase() })
       if (item.extra) {
-        for (const [k, v] of Object.entries(item.extra)) rows.push({ label: k, value: v })
+        for (const [k, v] of Object.entries(item.extra)) rows.push({ label: k, value: String(v) })
       }
 
       const actionUrl = item.machineName && item.machineId && serverUrl
@@ -581,7 +581,7 @@ export function renderDigestEmail(opts: {
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
 function escapeHtml(str: string): string {
-  return str
+  return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')

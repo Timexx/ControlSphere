@@ -501,15 +501,16 @@ async function sendDigest(): Promise<void> {
     if (recipients.length === 0) { scheduleNextDigest(); return }
 
     const [serverUrl, lang] = await Promise.all([getServerUrl(), getAdminLanguage()])
-    const items = buffer.splice(0, buffer.length)
+    const items = [...buffer]
     const { subject, html, text } = renderDigestEmail({ items, date: new Date(), serverUrl, lang })
     const smtp = buildSmtpConfig(cfg)
 
     console.log(`[notifications] sending digest: ${items.length} events to ${recipients.join(', ')}`)
     await sendEmail(smtp, { to: recipients, subject, html, text, eventKey: 'digest' })
+    buffer.splice(0, items.length)
     console.log(`[notifications] digest sent: "${subject}"`)
   } catch (err) {
-    console.error('[notifications] Error sending digest:', err)
+    console.error('[notifications] Error sending digest (events preserved for retry):', err)
   } finally {
     scheduleNextDigest()
   }
