@@ -528,7 +528,10 @@ export class WebClientConnectionManager {
 
     try {
       const secret = await this.jwtSecret()
-      const { payload } = await jwtVerify(token, new TextEncoder().encode(secret))
+      const { payload } = await jwtVerify(token, new TextEncoder().encode(secret), {
+        issuer:   process.env.JWT_ISSUER   || 'maintainer.local',
+        audience: process.env.JWT_AUDIENCE || 'maintainer.clients',
+      })
 
       // Extract userId and username from token payload
       const userId =
