@@ -1100,7 +1100,7 @@ const messages = {
         completed: 'Update complete!',
         completedDesc: 'ControlSphere has been updated successfully.',
         failed: 'Update failed',
-        timeout: 'Server has not responded within 2 minutes. Please check your server manually.',
+        timeout: 'Server has not responded within 5 minutes. Please check your server manually.',
         close: 'Close',
       },
       errors: {

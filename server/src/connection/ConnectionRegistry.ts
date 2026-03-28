@@ -101,4 +101,8 @@ export class ConnectionRegistry {
   listWebClients(): Iterable<WebSocket> {
     return this.webClientSessions.keys()
   }
+
+  listAgentSockets(): WebSocket[] {
+    return Array.from(this.machineConnections.values()).map(info => info.socket)
+  }
 }

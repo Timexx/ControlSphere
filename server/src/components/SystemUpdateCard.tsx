@@ -154,6 +154,7 @@ export default function SystemUpdateCard() {
   const [showAuth, setShowAuth] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [updatePhase, setUpdatePhase] = useState<string | null>(null)
+  const [updateMessage, setUpdateMessage] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
   const [logPath, setLogPath] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
@@ -197,18 +198,48 @@ export default function SystemUpdateCard() {
       try {
         const r = await fetch('/api/admin/server-update/check', { cache: 'no-store' })
         if (r.ok) {
-          const d: UpdateCheckResult = await r.json()
+          const d = await r.json()
+
+          // Use status file for real-time progress if available
+          if (d.updateStatus) {
+            const { phase, message } = d.updateStatus
+            setUpdateMessage(message || null)
+
+            if (phase === 'completed') {
+              clearInterval(pollRef.current!)
+              setData(d)
+              setUpdatePhase('completed')
+              localStorage.removeItem(UPDATE_KEY)
+              setTimeout(() => { setUpdating(false); setUpdatePhase(null); setUpdateMessage(null) }, 6000)
+              return
+            }
+            if (phase === 'failed') {
+              clearInterval(pollRef.current!)
+              setUpdatePhase(null)
+              setUpdateError(message || t('errors.updateFailed'))
+              localStorage.removeItem(UPDATE_KEY)
+              return
+            }
+            // Map script phases to UI phases
+            if (phase === 'stopping') setUpdatePhase('pulling')
+            else if (phase === 'pulling') setUpdatePhase('pulling')
+            else if (phase === 'building_agents' || phase === 'building') setUpdatePhase('building')
+            else if (phase === 'starting' || phase === 'health_check') setUpdatePhase('restarting')
+          }
+
+          // Fallback: detect completion via SHA change
           if (startShaRef.current && d.currentSha !== startShaRef.current) {
             clearInterval(pollRef.current!)
             setData(d)
             setUpdatePhase('completed')
             localStorage.removeItem(UPDATE_KEY)
-            setTimeout(() => { setUpdating(false); setUpdatePhase(null) }, 6000)
+            setTimeout(() => { setUpdating(false); setUpdatePhase(null); setUpdateMessage(null) }, 6000)
           }
         }
       } catch {
         // Server still down — expected during restart
         setUpdatePhase('restarting')
+        setUpdateMessage(null)
       }
     }, POLL_INTERVAL)
 
@@ -412,6 +443,9 @@ export default function SystemUpdateCard() {
                 {updatePhase === 'building' && t('progress.building')}
                 {updatePhase === 'restarting' && t('progress.waitingRestart')}
               </p>
+              {updateMessage && (
+                <p className="text-xs text-slate-500 mt-1">{updateMessage}</p>
+              )}
               <p className="text-xs text-slate-500 mt-2 font-mono">{formatElapsed(elapsedSeconds)}</p>
             </div>
             <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">

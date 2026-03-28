@@ -180,6 +180,37 @@ async function bootstrap(): Promise<void> {
   wsUpgrade.attach()
 
   logger.info('ServerReady', { url: `http://${hostname}:${port}`, ws: ['/ws/agent', '/ws/web'] })
+
+  // ── Graceful shutdown ────────────────────────────────────────────────
+  let shuttingDown = false
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    logger.info('ShutdownSignal', { signal })
+
+    // Stop background services
+    updateChecker.stopPeriodicCheck()
+    notificationService.shutdown()
+
+    // Close all WebSocket connections gracefully
+    for (const client of registry.listWebClients()) {
+      try { client.close(1001, 'Server shutting down') } catch {}
+    }
+    for (const agent of registry.listAgentSockets()) {
+      try { agent.close(1001, 'Server shutting down') } catch {}
+    }
+
+    // Stop HTTP server (drains in-flight requests)
+    try { await httpServer.stop() } catch {}
+
+    // Disconnect Prisma
+    try { await prisma.$disconnect() } catch {}
+
+    process.exit(0)
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
 }
 
 bootstrap().catch((error) => {

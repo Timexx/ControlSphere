@@ -63,8 +63,16 @@ export async function POST(request: NextRequest) {
     const primaryLogsDir = path.join(installDir, 'logs')
     const fallbackLogsDir = path.join('/tmp', 'controlsphere-logs')
 
-    // Clean old logs (non-critical)
+    // Clean old logs and runner scripts (non-critical)
     try { updateChecker.cleanOldLogs() } catch (_e) { /* non-critical */ }
+    try {
+      const logsFiles = fs.existsSync(primaryLogsDir) ? fs.readdirSync(primaryLogsDir) : []
+      for (const f of logsFiles) {
+        if (f.startsWith('.update-runner-') && f.endsWith('.sh')) {
+          fs.unlinkSync(path.join(primaryLogsDir, f))
+        }
+      }
+    } catch { /* non-critical */ }
 
     // Ensure the logs directory exists
     let logsDir = primaryLogsDir
@@ -94,11 +102,25 @@ export async function POST(request: NextRequest) {
       details: { logPath, triggeredBy: user.username },
     })
 
-    // Spawn detached update process — log-helper.sh handles file logging
-    // via the CS_UPDATE_LOG env var so both sides use the same path.
+    // Copy script to logs/ before spawning — prevents the self-modification
+    // problem where git reset --hard replaces the running script on disk.
+    const runnerName = `.update-runner-${Date.now()}.sh`
+    const runnerPath = path.join(logsDir, runnerName)
+    try {
+      fs.copyFileSync(scriptPath, runnerPath)
+      fs.chmodSync(runnerPath, 0o755)
+    } catch (copyErr: any) {
+      return NextResponse.json(
+        { error: `Cannot prepare update runner: ${copyErr.message}` },
+        { status: 500 }
+      )
+    }
+
+    // Spawn detached update process from the copied script.
+    // log-helper.sh handles file logging via the CS_UPDATE_LOG env var.
     let child
     try {
-      child = spawn('bash', [scriptPath], {
+      child = spawn('bash', [runnerPath], {
         detached: true,
         stdio: 'ignore',
         cwd: installDir,
