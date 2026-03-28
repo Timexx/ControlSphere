@@ -102,6 +102,13 @@ export async function POST(request: NextRequest) {
       details: { logPath, triggeredBy: user.username },
     })
 
+    // Clear stale status file from a previous run so the UI doesn't
+    // immediately read the old "completed" status before the new script starts.
+    try {
+      const statusPath = path.join(logsDir, 'update-status.json')
+      if (fs.existsSync(statusPath)) fs.unlinkSync(statusPath)
+    } catch { /* non-critical */ }
+
     // Copy script to logs/ before spawning — prevents the self-modification
     // problem where git reset --hard replaces the running script on disk.
     const runnerName = `.update-runner-${Date.now()}.sh`
