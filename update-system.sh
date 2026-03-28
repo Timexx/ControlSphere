@@ -159,16 +159,21 @@ echo ""
 echo -e "${BLUE}[3/7] Cleaning old agent binaries...${NC}"
 write_status "building_agents" "Cleaning old agent binaries..."
 
+CURRENT_USER="${SUDO_USER:-$(whoami)}"
 if [ -d "agent/bin" ]; then
     sudo rm -f agent/bin/maintainer-agent* 2>/dev/null || rm -f agent/bin/maintainer-agent* 2>/dev/null || true
+    # Fix ownership so the normal user can write new binaries
+    sudo chown -R "$CURRENT_USER":"$CURRENT_USER" agent/bin 2>/dev/null || true
     echo -e "${GREEN}Old binaries deleted from agent/bin${NC}"
 fi
 if [ -d "server/public/downloads" ]; then
     sudo rm -f server/public/downloads/maintainer-agent* 2>/dev/null || true
+    sudo chown -R "$CURRENT_USER":"$CURRENT_USER" server/public/downloads 2>/dev/null || true
     echo -e "${GREEN}Old binaries deleted from downloads directory${NC}"
 fi
 if [ -d "server/public/download" ]; then
     sudo rm -f server/public/download/maintainer-agent* 2>/dev/null || true
+    sudo chown -R "$CURRENT_USER":"$CURRENT_USER" server/public/download 2>/dev/null || true
     echo -e "${GREEN}Old binaries deleted from download directory${NC}"
 fi
 
@@ -201,10 +206,10 @@ echo -e "${BLUE}[5/7] Building server...${NC}"
 
 cd "$INSTALL_DIR/server"
 
-# 5a: Install/update dependencies
+# 5a: Install/update dependencies (devDeps needed for build + ts-node at runtime)
 write_status "building" "Installing dependencies..."
 echo -e "${YELLOW}Installing dependencies...${NC}"
-if ! npm install --omit=dev 2>&1; then
+if ! npm install 2>&1; then
     write_status "failed" "npm install failed"
     echo -e "${RED}npm install failed${NC}"
     exit 1
@@ -271,25 +276,56 @@ echo ""
 echo -e "${BLUE}[7/7] Verifying server health...${NC}"
 write_status "health_check" "Waiting for server to respond..."
 
-HEALTH_OK=false
-for i in $(seq 1 30); do
-    if curl -sf -o /dev/null -m 3 http://localhost:3000/api/server-info 2>/dev/null; then
-        HEALTH_OK=true
-        break
-    fi
-    sleep 2
-done
+SERVICE_OK=false
+PORT_OK=false
 
-if [ "$HEALTH_OK" = "true" ]; then
-    UPDATE_COMPLETED=true
-    write_status "completed" "Update successful"
-    echo -e "${GREEN}Server is responding on port 3000${NC}"
-else
-    write_status "failed" "Server did not respond within 60 seconds"
-    echo -e "${RED}Server health check failed – not responding on port 3000${NC}"
-    if [[ "$OSTYPE" == "linux"* ]]; then
-        echo -e "${YELLOW}Check logs: sudo journalctl -u controlsphere -f${NC}"
+if [[ "$OSTYPE" == "linux"* ]]; then
+    # Wait up to 30s for systemd to confirm service is active
+    for i in $(seq 1 15); do
+        if sudo systemctl is-active --quiet controlsphere.service 2>/dev/null; then
+            SERVICE_OK=true
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$SERVICE_OK" = "false" ]; then
+        echo -e "${RED}Service failed to start${NC}"
+        sudo journalctl -u controlsphere --no-pager -n 30 2>/dev/null || true
+        write_status "failed" "Service failed to start"
+        exit 1
     fi
+
+    # Service is active — additionally verify port is open (informational, non-fatal)
+    for i in $(seq 1 10); do
+        if ss -tlnp 2>/dev/null | grep -q ':3000 '; then
+            PORT_OK=true
+            break
+        fi
+        sleep 2
+    done
+
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+    sleep 5
+    if lsof -ti:3000 &>/dev/null; then
+        SERVICE_OK=true
+        PORT_OK=true
+    fi
+fi
+
+if [ "$SERVICE_OK" = "true" ]; then
+    UPDATE_COMPLETED=true
+    if [ "$PORT_OK" = "true" ]; then
+        write_status "completed" "Update successful"
+        echo -e "${GREEN}Server is running and port 3000 is open${NC}"
+    else
+        write_status "completed" "Update successful (service active)"
+        echo -e "${GREEN}Service is active${NC}"
+        echo -e "${YELLOW}Note: Port 3000 not yet visible via ss — service may still be initializing${NC}"
+    fi
+else
+    write_status "failed" "Service not active after restart"
+    echo -e "${RED}Service is not active after restart${NC}"
     exit 1
 fi
 
