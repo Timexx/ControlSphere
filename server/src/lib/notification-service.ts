@@ -481,6 +481,43 @@ function msUntilNextDigest(hour: number, minute: number, days: number[]): number
   return 86_400_000
 }
 
+/**
+ * Deduplicate digest items: for recurring status events (updates available,
+ * scan completed, agent offline, …) only the latest entry per machine matters.
+ * One-off action events (user created, bulk job, …) are always kept.
+ */
+function deduplicateDigestItems(items: DigestItem[]): DigestItem[] {
+  // Events where only the latest per machine is meaningful
+  const latestPerMachine: Set<NotificationEventKey> = new Set([
+    'machineUpdatesAvailable',
+    'scanCompleted',
+    'agentOffline',
+    'serverUpdateAvailable',
+    'highCve',
+    'criticalCve',
+  ])
+
+  const seen = new Map<string, number>() // key → index in result
+  const result: DigestItem[] = []
+
+  // Walk newest-first so the first hit per key wins
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (latestPerMachine.has(item.event)) {
+      const key = `${item.event}::${item.machineId ?? '_global'}`
+      if (!seen.has(key)) {
+        seen.set(key, result.length)
+        result.push(item)
+      }
+    } else {
+      result.push(item)
+    }
+  }
+
+  result.reverse() // restore chronological order
+  return result
+}
+
 async function sendDigest(): Promise<void> {
   const buffer = getDigestBuffer()
   console.log(`[notifications] sendDigest: ${buffer.length} items buffered`)
@@ -501,7 +538,8 @@ async function sendDigest(): Promise<void> {
     if (recipients.length === 0) { scheduleNextDigest(); return }
 
     const [serverUrl, lang] = await Promise.all([getServerUrl(), getAdminLanguage()])
-    const items = [...buffer]
+    const items = deduplicateDigestItems([...buffer])
+    console.log(`[notifications] digest dedup: ${buffer.length} → ${items.length} items`)
     const { subject, html, text } = renderDigestEmail({ items, date: new Date(), serverUrl, lang })
     const smtp = buildSmtpConfig(cfg)
 
