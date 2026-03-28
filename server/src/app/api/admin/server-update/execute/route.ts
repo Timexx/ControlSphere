@@ -131,7 +131,7 @@ export async function POST(request: NextRequest) {
         detached: true,
         stdio: 'ignore',
         cwd: installDir,
-        env: { ...process.env, CS_UPDATE_LOG: logPath },
+        env: { ...process.env, CS_UPDATE_LOG: logPath, CS_INSTALL_DIR: installDir },
       })
     } catch (spawnErr: any) {
       return NextResponse.json(

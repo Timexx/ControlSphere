@@ -9,15 +9,19 @@ RED='\033[0;31m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-# ── Detect the directory where THIS script lives ──
-# When invoked via the execute route, this may be a temporary copy in logs/.
-# INSTALL_DIR must always point to the project root.
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-# If running from logs/ (copied runner), go up one level
-if [[ "$SCRIPT_DIR" == */logs ]]; then
-    INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# ── Detect the project root ──
+# The execute route passes CS_INSTALL_DIR (most reliable).
+# Fallback: if the script runs from a directory whose basename is "logs",
+# go up one level.  Direct invocation uses the script's own directory.
+if [ -n "$CS_INSTALL_DIR" ]; then
+    INSTALL_DIR="$CS_INSTALL_DIR"
 else
-    INSTALL_DIR="$SCRIPT_DIR"
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    if [ "$(basename "$SCRIPT_DIR")" = "logs" ]; then
+        INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+    else
+        INSTALL_DIR="$SCRIPT_DIR"
+    fi
 fi
 
 # ── Status file for UI feedback ──────────────────────────────────────────
