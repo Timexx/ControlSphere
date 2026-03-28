@@ -126,9 +126,22 @@ export default function LogsPage() {
 
   // ── Copy ─────────────────────────────────────────────────────────────────
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(displayedContent)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(displayedContent)
+      } else {
+        const textarea = document.createElement('textarea')
+        textarea.value = displayedContent
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+      }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch { /* ignore */ }
   }
 
   // ── Download ─────────────────────────────────────────────────────────────

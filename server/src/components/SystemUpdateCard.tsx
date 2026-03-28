@@ -431,7 +431,7 @@ export default function SystemUpdateCard() {
                   <div className="relative group">
                     <pre className="text-[11px] text-slate-300 bg-slate-900/80 border border-slate-700 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{fixCommand}</pre>
                     <button
-                      onClick={() => navigator.clipboard.writeText(fixCommand)}
+                      onClick={() => { try { if (navigator.clipboard) { navigator.clipboard.writeText(fixCommand) } else { const ta = document.createElement('textarea'); ta.value = fixCommand; ta.style.position = 'fixed'; ta.style.opacity = '0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta) } } catch {} }}
                       className="absolute top-2 right-2 px-2 py-1 rounded text-[10px] text-slate-400 bg-slate-800 border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity hover:text-white"
                     >
                       Copy

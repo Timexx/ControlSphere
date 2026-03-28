@@ -469,9 +469,18 @@ function PasswordDisplayModal({
   const [copied, setCopied] = useState(false)
 
   async function handleCopy() {
-    await navigator.clipboard.writeText(password)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 3000)
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(password)
+      } else {
+        const ta = document.createElement('textarea')
+        ta.value = password; ta.style.position = 'fixed'; ta.style.opacity = '0'
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 3000)
+    } catch { /* ignore */ }
   }
 
   return (
