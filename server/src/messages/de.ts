@@ -1102,10 +1102,12 @@ const messages = {
         failed: 'Update fehlgeschlagen',
         timeout: 'Der Server hat innerhalb von 5 Minuten nicht geantwortet. Bitte prüfe den Server manuell.',
         close: 'Schließen',
+        fixInstructions: 'Führe diesen Befehl auf dem Server aus, um das Problem zu beheben:',
       },
       errors: {
         checkFailed: 'Update-Prüfung fehlgeschlagen.',
         updateFailed: 'Update konnte nicht gestartet werden.',
+        readOnlyFs: 'Das Installationsverzeichnis ist schreibgeschützt. Der systemd-Service benötigt erweiterte Schreibrechte.',
       },
     },
   },

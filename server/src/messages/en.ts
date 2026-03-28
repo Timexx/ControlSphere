@@ -1102,10 +1102,12 @@ const messages = {
         failed: 'Update failed',
         timeout: 'Server has not responded within 5 minutes. Please check your server manually.',
         close: 'Close',
+        fixInstructions: 'Run this command on the server to fix the issue, then try again:',
       },
       errors: {
         checkFailed: 'Failed to check for updates.',
         updateFailed: 'Failed to start update process.',
+        readOnlyFs: 'The install directory is read-only. The systemd service needs wider write permissions.',
       },
     },
   },

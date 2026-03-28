@@ -156,6 +156,7 @@ export default function SystemUpdateCard() {
   const [updatePhase, setUpdatePhase] = useState<string | null>(null)
   const [updateMessage, setUpdateMessage] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
+  const [fixCommand, setFixCommand] = useState<string | null>(null)
   const [logPath, setLogPath] = useState<string | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -352,8 +353,12 @@ export default function SystemUpdateCard() {
 
       if (!res.ok) {
         const d = await res.json()
-        // Keep overlay visible — user must dismiss manually
-        setUpdateError(d.error || t('errors.updateFailed'))
+        if (d.error === 'readOnlyFilesystem') {
+          setUpdateError(d.message || t('errors.readOnlyFs'))
+          setFixCommand(d.fixCommand || null)
+        } else {
+          setUpdateError(d.error || t('errors.updateFailed'))
+        }
         localStorage.removeItem(UPDATE_KEY)
         return
       }
@@ -420,12 +425,26 @@ export default function SystemUpdateCard() {
             <div>
               <h3 className="text-xl font-semibold text-white">{t('progress.failed')}</h3>
               <p className="text-sm text-slate-400 mt-2">{updateError}</p>
-              {logPath && (
+              {fixCommand && (
+                <div className="mt-4 text-left">
+                  <p className="text-xs text-amber-400 mb-2">{t('progress.fixInstructions')}</p>
+                  <div className="relative group">
+                    <pre className="text-[11px] text-slate-300 bg-slate-900/80 border border-slate-700 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">{fixCommand}</pre>
+                    <button
+                      onClick={() => navigator.clipboard.writeText(fixCommand)}
+                      className="absolute top-2 right-2 px-2 py-1 rounded text-[10px] text-slate-400 bg-slate-800 border border-slate-700 opacity-0 group-hover:opacity-100 transition-opacity hover:text-white"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              )}
+              {!fixCommand && logPath && (
                 <p className="text-xs text-slate-500 font-mono mt-3">{t('logLabel')}: {logPath}</p>
               )}
             </div>
             <button
-              onClick={() => { setUpdating(false); setUpdateError(null); setUpdatePhase(null) }}
+              onClick={() => { setUpdating(false); setUpdateError(null); setUpdatePhase(null); setFixCommand(null) }}
               className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-300 hover:bg-slate-800 transition-colors"
             >
               {t('progress.close')}

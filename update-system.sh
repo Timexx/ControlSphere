@@ -60,6 +60,19 @@ echo ""
 echo -e "${BLUE}Working directory: ${INSTALL_DIR}${NC}"
 cd "$INSTALL_DIR"
 
+# ── Pre-flight: check write access ────────────────────────────────────────
+if ! touch "$INSTALL_DIR/.write-test" 2>/dev/null; then
+    echo -e "${RED}ERROR: Install directory is read-only!${NC}"
+    echo -e "${YELLOW}This usually means the systemd unit has ReadWritePaths set too narrowly.${NC}"
+    echo -e "${YELLOW}Run the following command on the server to fix it:${NC}"
+    echo ""
+    echo -e "  sudo sed -i 's|ReadWritePaths=.*|ReadWritePaths=${INSTALL_DIR}|' /etc/systemd/system/controlsphere.service && sudo systemctl daemon-reload && sudo systemctl restart controlsphere.service"
+    echo ""
+    write_status "failed" "Install directory is read-only (systemd ProtectSystem). Fix ReadWritePaths in controlsphere.service."
+    exit 1
+fi
+rm -f "$INSTALL_DIR/.write-test"
+
 # Ensure this is a git repository (handle installs via archive/scp)
 REPO_URL="https://github.com/timexx/controlsphere.git"
 if [ ! -d ".git" ]; then
@@ -348,3 +361,18 @@ echo ""
 echo -e "${YELLOW}Note: If the agent binary was updated, you may need to update the agents on all connected clients.${NC}"
 echo -e "${YELLOW}  Agents can be updated from the web interface or by re-running the install script on each client.${NC}"
 echo ""
+
+# ── Auto-fix: ensure systemd ReadWritePaths covers the full install dir ───
+if [[ "$OSTYPE" == "linux"* ]] && [ -f /etc/systemd/system/controlsphere.service ]; then
+    CURRENT_RW=$(grep -oP 'ReadWritePaths=\K.*' /etc/systemd/system/controlsphere.service 2>/dev/null || true)
+    if [ -n "$CURRENT_RW" ] && [ "$CURRENT_RW" != "$INSTALL_DIR" ]; then
+        echo -e "${YELLOW}Fixing systemd ReadWritePaths ($CURRENT_RW → $INSTALL_DIR)...${NC}"
+        if sudo sed -i "s|ReadWritePaths=.*|ReadWritePaths=${INSTALL_DIR}|" /etc/systemd/system/controlsphere.service 2>/dev/null; then
+            sudo systemctl daemon-reload 2>/dev/null || true
+            echo -e "${GREEN}systemd unit updated — next restart will have full write access${NC}"
+        else
+            echo -e "${YELLOW}Could not auto-fix ReadWritePaths (no sudo access). Run manually:${NC}"
+            echo -e "  sudo sed -i 's|ReadWritePaths=.*|ReadWritePaths=${INSTALL_DIR}|' /etc/systemd/system/controlsphere.service && sudo systemctl daemon-reload"
+        fi
+    fi
+fi

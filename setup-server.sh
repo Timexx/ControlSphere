@@ -598,7 +598,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=$SERVER_DIR
+ReadWritePaths=$(dirname "$SERVER_DIR")
 
 [Install]
 WantedBy=multi-user.target

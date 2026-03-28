@@ -56,6 +56,23 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Check if the install directory is writable.
+    // When running under systemd with ProtectSystem=strict, ReadWritePaths
+    // may only cover server/ — the update script needs the full project root.
+    try {
+      fs.accessSync(installDir, fs.constants.W_OK)
+    } catch {
+      const fixCmd = `sudo sed -i 's|ReadWritePaths=.*|ReadWritePaths=${installDir}|' /etc/systemd/system/controlsphere.service && sudo systemctl daemon-reload && sudo systemctl restart controlsphere.service`
+      return NextResponse.json(
+        {
+          error: 'readOnlyFilesystem',
+          message: `The install directory is read-only (systemd ProtectSystem=strict). The systemd unit must allow write access to the full project directory.`,
+          fixCommand: fixCmd,
+        },
+        { status: 409 }
+      )
+    }
+
     // Prepare log path — log-helper.sh handles the actual file creation.
     // We pass the desired path via CS_UPDATE_LOG env var so both the
     // execute route and the script agree on the same file.
