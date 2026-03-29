@@ -226,7 +226,7 @@ cd "$INSTALL_DIR/server"
 # 5a: Install/update dependencies (devDeps needed for build + ts-node at runtime)
 write_status "building" "Installing dependencies..."
 echo -e "${YELLOW}Installing dependencies...${NC}"
-if ! npm install 2>&1; then
+if ! npm install --include=dev 2>&1; then
     write_status "failed" "npm install failed"
     echo -e "${RED}npm install failed${NC}"
     exit 1
