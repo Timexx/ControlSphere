@@ -608,14 +608,37 @@ EOF
     sudo systemctl enable controlsphere.service
     sudo systemctl start controlsphere.service
     sleep 2
-    
+
     if sudo systemctl is-active --quiet controlsphere.service; then
         echo -e "${GREEN}Service started successfully ✓${NC}"
     else
         echo -e "${YELLOW}Service may still be starting... Check status with:${NC}"
         echo -e "  sudo systemctl status controlsphere"
     fi
-    
+
+    # ── Sudoers: allow service user to manage controlsphere without a password ──
+    # Required so the in-app update function can restart the server after building
+    # (update runs detached without a TTY, so interactive sudo would always fail)
+    SUDOERS_FILE="/etc/sudoers.d/controlsphere"
+    SYSTEMCTL_PATH="$(which systemctl 2>/dev/null || echo /usr/bin/systemctl)"
+    sudo tee "$SUDOERS_FILE" > /dev/null <<EOF
+# ControlSphere: passwordless service management for $SERVICE_USER
+# Required for the web-triggered update function (runs without a TTY)
+$SERVICE_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH daemon-reload
+$SERVICE_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start controlsphere.service
+$SERVICE_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop controlsphere.service
+$SERVICE_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart controlsphere.service
+$SERVICE_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active controlsphere.service
+$SERVICE_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH list-units --type\=service
+EOF
+    sudo chmod 440 "$SUDOERS_FILE"
+    if sudo visudo -cf "$SUDOERS_FILE" > /dev/null 2>&1; then
+        echo -e "${GREEN}Passwordless service management configured ✓${NC}"
+    else
+        echo -e "${YELLOW}Warning: sudoers syntax check failed – removing file${NC}"
+        sudo rm -f "$SUDOERS_FILE"
+    fi
+
     SERVICE_CMD_STATUS="sudo systemctl status controlsphere"
     SERVICE_CMD_RESTART="sudo systemctl restart controlsphere"
     SERVICE_CMD_STOP="sudo systemctl stop controlsphere"

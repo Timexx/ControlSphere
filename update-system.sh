@@ -161,6 +161,35 @@ echo -e "${GREEN}Repository updated to latest origin/${BRANCH}${NC}"
 # Re-apply stashed changes (restores .env etc.)
 git stash pop 2>/dev/null || true
 
+# ── Ensure sudoers allows passwordless service management ─────────────────
+# This is needed so Step 6 can restart the service after the long build,
+# when interactive sudo credentials have long since expired.
+# We do this right after git pull while credentials are still cached.
+if [[ "$OSTYPE" == "linux"* ]] && command -v systemctl &>/dev/null; then
+    SUDOERS_FILE="/etc/sudoers.d/controlsphere"
+    SYSTEMCTL_PATH="$(which systemctl 2>/dev/null || echo /usr/bin/systemctl)"
+    CURRENT_USER="${SUDO_USER:-$(whoami)}"
+    if [ ! -f "$SUDOERS_FILE" ] || ! grep -q "daemon-reload" "$SUDOERS_FILE" 2>/dev/null; then
+        if sudo tee "$SUDOERS_FILE" > /dev/null 2>&1 <<EOF
+# ControlSphere: passwordless service management for $CURRENT_USER
+# Required for the web-triggered update function (runs without a TTY)
+$CURRENT_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH daemon-reload
+$CURRENT_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH start controlsphere.service
+$CURRENT_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH stop controlsphere.service
+$CURRENT_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH restart controlsphere.service
+$CURRENT_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH is-active controlsphere.service
+$CURRENT_USER ALL=(ALL) NOPASSWD: $SYSTEMCTL_PATH list-units --type\=service
+EOF
+        then
+            sudo chmod 440 "$SUDOERS_FILE" 2>/dev/null || true
+            sudo visudo -cf "$SUDOERS_FILE" > /dev/null 2>&1 || sudo rm -f "$SUDOERS_FILE"
+            echo -e "${GREEN}Passwordless service management configured${NC}"
+        else
+            echo -e "${YELLOW}Note: Could not configure passwordless sudo (restart may fail if credentials expire)${NC}"
+        fi
+    fi
+fi
+
 # Fix ownership if prior root run left artifacts
 CURRENT_USER="${SUDO_USER:-$(whoami)}"
 if [ -d "server/node_modules" ]; then
@@ -267,10 +296,10 @@ echo -e "${BLUE}[6/7] Starting service...${NC}"
 write_status "starting" "Starting service..."
 
 if [[ "$OSTYPE" == "linux"* ]]; then
-    sudo systemctl daemon-reload
-    sudo systemctl restart controlsphere.service
+    sudo -n systemctl daemon-reload
+    sudo -n systemctl restart controlsphere.service
     sleep 2
-    if sudo systemctl is-active --quiet controlsphere.service 2>/dev/null; then
+    if sudo -n systemctl is-active --quiet controlsphere.service 2>/dev/null; then
         echo -e "${GREEN}ControlSphere service started${NC}"
     else
         echo -e "${YELLOW}Service may still be starting...${NC}"
@@ -299,7 +328,7 @@ PORT_OK=false
 if [[ "$OSTYPE" == "linux"* ]]; then
     # Wait up to 30s for systemd to confirm service is active
     for i in $(seq 1 15); do
-        if sudo systemctl is-active --quiet controlsphere.service 2>/dev/null; then
+        if sudo -n systemctl is-active --quiet controlsphere.service 2>/dev/null; then
             SERVICE_OK=true
             break
         fi
@@ -308,7 +337,7 @@ if [[ "$OSTYPE" == "linux"* ]]; then
 
     if [ "$SERVICE_OK" = "false" ]; then
         echo -e "${RED}Service failed to start${NC}"
-        sudo journalctl -u controlsphere --no-pager -n 30 2>/dev/null || true
+        sudo -n journalctl -u controlsphere --no-pager -n 30 2>/dev/null || true
         write_status "failed" "Service failed to start"
         exit 1
     fi
