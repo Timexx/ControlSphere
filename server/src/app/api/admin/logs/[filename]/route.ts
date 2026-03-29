@@ -58,3 +58,43 @@ export async function GET(
     return NextResponse.json({ error: 'Failed to read log file' }, { status: 500 })
   }
 }
+
+/**
+ * DELETE /api/admin/logs/[filename] — Delete a log file (admin only)
+ */
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ filename: string }> }
+) {
+  try {
+    const session = await getSession()
+    requireAdmin(session)
+
+    const { filename } = await params
+    if (!filename.endsWith('.log') || filename.includes('/') || filename.includes('..')) {
+      return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
+    }
+
+    let deleted = false
+    for (const dir of [PRIMARY_LOGS_DIR, FALLBACK_LOGS_DIR]) {
+      const candidate = path.join(dir, filename)
+      if (!candidate.startsWith(dir + path.sep) && candidate !== dir) continue
+      if (fs.existsSync(candidate)) {
+        fs.unlinkSync(candidate)
+        deleted = true
+      }
+    }
+
+    if (!deleted) {
+      return NextResponse.json({ error: 'File not found' }, { status: 404 })
+    }
+
+    return NextResponse.json({ ok: true })
+  } catch (error: any) {
+    if (error.name === 'AuthorizationError') {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    console.error('[admin/logs/file] Error deleting log:', error)
+    return NextResponse.json({ error: 'Failed to delete log file' }, { status: 500 })
+  }
+}

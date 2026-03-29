@@ -12,6 +12,7 @@ import {
   FolderOpen,
   ChevronRight,
   AlertCircle,
+  Trash2,
 } from 'lucide-react'
 import { useTranslations } from 'next-intl'
 import { cn } from '@/lib/utils'
@@ -54,6 +55,8 @@ export default function LogsPage() {
   const [filter, setFilter] = useState('')
   const [copied, setCopied] = useState(false)
   const [refreshingFile, setRefreshingFile] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const viewerRef = useRef<HTMLPreElement>(null)
 
@@ -154,6 +157,28 @@ export default function LogsPage() {
     a.download = selectedFile
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  // ── Delete ────────────────────────────────────────────────────────────────
+  const handleDelete = async () => {
+    if (!selectedFile) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/admin/logs/${encodeURIComponent(selectedFile)}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setSelectedFile(null)
+      setContent('')
+      setConfirmDelete(false)
+      await fetchFiles()
+    } catch (err: any) {
+      setContentError(err.message)
+      setConfirmDelete(false)
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -302,6 +327,35 @@ export default function LogsPage() {
                   >
                     <Download className="h-3.5 w-3.5" />
                   </button>
+
+                  {/* Delete */}
+                  {confirmDelete ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleDelete}
+                        disabled={deleting}
+                        title={t('deleteConfirm')}
+                        className="px-2 py-1 rounded-md text-xs text-red-400 hover:text-white hover:bg-red-500/20 border border-red-500/40 transition-colors disabled:opacity-50"
+                      >
+                        {deleting ? <RefreshCw className="h-3 w-3 animate-spin" /> : t('deleteConfirm')}
+                      </button>
+                      <button
+                        onClick={() => setConfirmDelete(false)}
+                        title={t('deleteCancel')}
+                        className="p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setConfirmDelete(true)}
+                      title={t('delete')}
+                      className="p-1.5 rounded-md text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
 
                 {/* Match count when filtering */}
