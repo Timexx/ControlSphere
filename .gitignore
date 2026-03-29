@@ -34,3 +34,7 @@ CLAUDE.md
 # OS
 Thumbs.db
 ._*
+
+# Runtime
+logs/
+server.pid

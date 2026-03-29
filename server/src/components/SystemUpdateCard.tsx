@@ -152,6 +152,8 @@ export default function SystemUpdateCard() {
   const [checking, setChecking] = useState(false)
   const [showChangelog, setShowChangelog] = useState(false)
   const [showAuth, setShowAuth] = useState(false)
+  const [installedCommits, setInstalledCommits] = useState<CommitInfo[]>([])
+  const [showInstalledChangelog, setShowInstalledChangelog] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [updatePhase, setUpdatePhase] = useState<string | null>(null)
   const [updateMessage, setUpdateMessage] = useState<string | null>(null)
@@ -211,7 +213,6 @@ export default function SystemUpdateCard() {
               setData(d)
               setUpdatePhase('completed')
               localStorage.removeItem(UPDATE_KEY)
-              setTimeout(() => { setUpdating(false); setUpdatePhase(null); setUpdateMessage(null) }, 6000)
               return
             }
             if (phase === 'failed') {
@@ -335,6 +336,8 @@ export default function SystemUpdateCard() {
     setUpdating(true)
     setUpdatePhase('pulling')
     setUpdateError(null)
+    setInstalledCommits(data?.commits ?? [])
+    setShowInstalledChangelog(false)
     startShaRef.current = data?.currentSha ?? null
 
     localStorage.setItem(UPDATE_KEY, JSON.stringify({
@@ -411,11 +414,44 @@ export default function SystemUpdateCard() {
             <div className="h-16 w-16 rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto">
               <CheckCircle2 className="h-8 w-8 text-emerald-400" />
             </div>
-            <div>
+            <div className="w-full">
               <h3 className="text-xl font-semibold text-white">{t('progress.completed')}</h3>
               <p className="text-sm text-slate-400 mt-2">{t('progress.completedDesc')}</p>
-              <p className="text-xs text-slate-500 mt-3">{formatElapsed(elapsedSeconds)}</p>
+              <p className="text-xs text-slate-500 mt-1">{formatElapsed(elapsedSeconds)}</p>
+
+              {installedCommits.length > 0 && (
+                <div className="mt-4 text-left">
+                  <button
+                    onClick={() => setShowInstalledChangelog(!showInstalledChangelog)}
+                    className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                  >
+                    {showInstalledChangelog ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    {locale === 'de' ? 'Installierte Änderungen' : 'Installed changes'} ({installedCommits.length})
+                  </button>
+                  {showInstalledChangelog && (
+                    <div className="mt-2 space-y-1 max-h-48 overflow-y-auto pr-1">
+                      {installedCommits.map((c) => (
+                        <div key={c.sha} className="flex items-start gap-2 py-1.5 border-b border-slate-800/50 last:border-0">
+                          <GitCommit className="h-3.5 w-3.5 text-slate-500 mt-0.5 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs text-slate-200">{c.message}</p>
+                            <p className="text-[10px] text-slate-500">
+                              {c.author} &middot; {c.sha} &middot; {relativeTime(c.date)}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
+            <button
+              onClick={() => { setUpdating(false); setUpdatePhase(null); setUpdateMessage(null); setShowInstalledChangelog(false) }}
+              className="px-8 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-500 transition-colors"
+            >
+              OK
+            </button>
           </>
         ) : updateError ? (
           <>
