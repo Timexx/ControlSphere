@@ -89,22 +89,25 @@ echo -e "${BLUE}[1/7] Stopping services...${NC}"
 write_status "stopping" "Stopping services..."
 
 if [[ "$OSTYPE" == "linux"* ]]; then
-    if systemctl list-units --type=service 2>/dev/null | grep -q controlsphere; then
-        sudo systemctl stop controlsphere.service 2>/dev/null || true
-        echo -e "${GREEN}Service stopped${NC}"
+    # Try systemd stop (works only if NOPASSWD sudoers is configured)
+    sudo -n systemctl stop controlsphere.service 2>/dev/null || true
+    # Kill by PID file (no sudo needed – same user)
+    if [ -f "$INSTALL_DIR/server.pid" ]; then
+        kill "$(cat "$INSTALL_DIR/server.pid")" 2>/dev/null || true
+        rm -f "$INSTALL_DIR/server.pid"
     fi
-    # Graceful shutdown: SIGTERM first, then force after 10s
-    PIDS=$(sudo lsof -ti:3000 2>/dev/null || true)
+    # Graceful shutdown by port: lsof/kill without sudo works for same-user processes
+    PIDS=$(lsof -ti:3000 2>/dev/null || true)
     if [ -n "$PIDS" ]; then
-        echo "$PIDS" | xargs sudo kill -15 2>/dev/null || true
+        echo "$PIDS" | xargs kill -15 2>/dev/null || true
         for i in $(seq 1 10); do
-            if ! sudo lsof -ti:3000 &>/dev/null; then break; fi
+            if ! lsof -ti:3000 &>/dev/null; then break; fi
             sleep 1
         done
         # Force kill only if still running
-        PIDS=$(sudo lsof -ti:3000 2>/dev/null || true)
+        PIDS=$(lsof -ti:3000 2>/dev/null || true)
         if [ -n "$PIDS" ]; then
-            echo "$PIDS" | xargs sudo kill -9 2>/dev/null || true
+            echo "$PIDS" | xargs kill -9 2>/dev/null || true
             sleep 1
         fi
     fi
@@ -296,13 +299,21 @@ echo -e "${BLUE}[6/7] Starting service...${NC}"
 write_status "starting" "Starting service..."
 
 if [[ "$OSTYPE" == "linux"* ]]; then
-    sudo -n systemctl daemon-reload
-    sudo -n systemctl restart controlsphere.service
-    sleep 2
-    if sudo -n systemctl is-active --quiet controlsphere.service 2>/dev/null; then
-        echo -e "${GREEN}ControlSphere service started${NC}"
+    STARTED_VIA_SYSTEMD=false
+    if sudo -n systemctl daemon-reload 2>/dev/null && sudo -n systemctl restart controlsphere.service 2>/dev/null; then
+        STARTED_VIA_SYSTEMD=true
+        echo -e "${GREEN}ControlSphere service started via systemd${NC}"
     else
-        echo -e "${YELLOW}Service may still be starting...${NC}"
+        # No NOPASSWD sudoers → start directly (server keeps running, no systemd management)
+        echo -e "${YELLOW}systemd not available without password — starting server directly...${NC}"
+        cd "$INSTALL_DIR/server"
+        NODE_ENV=production HOSTNAME=0.0.0.0 PORT=3000 \
+            nohup npm start > "$INSTALL_DIR/logs/server-stdout.log" 2>&1 &
+        echo $! > "$INSTALL_DIR/server.pid"
+        cd "$INSTALL_DIR"
+        echo -e "${YELLOW}Server started (PID $(cat "$INSTALL_DIR/server.pid"))${NC}"
+        echo -e "${YELLOW}Tip: run this once on the server for full systemd integration:${NC}"
+        echo -e "  sudo bash -c 'echo \"$(whoami) ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload, /usr/bin/systemctl start controlsphere.service, /usr/bin/systemctl stop controlsphere.service, /usr/bin/systemctl restart controlsphere.service, /usr/bin/systemctl is-active controlsphere.service\" > /etc/sudoers.d/controlsphere && chmod 440 /etc/sudoers.d/controlsphere'"
     fi
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     PLIST_FILE="$HOME/Library/LaunchAgents/com.controlsphere.server.plist"
@@ -326,10 +337,11 @@ SERVICE_OK=false
 PORT_OK=false
 
 if [[ "$OSTYPE" == "linux"* ]]; then
-    # Wait up to 30s for systemd to confirm service is active
-    for i in $(seq 1 15); do
-        if sudo -n systemctl is-active --quiet controlsphere.service 2>/dev/null; then
+    # Wait up to 60s for port 3000 to open (works regardless of systemd)
+    for i in $(seq 1 30); do
+        if ss -tlnp 2>/dev/null | grep -q ':3000 ' || lsof -ti:3000 &>/dev/null; then
             SERVICE_OK=true
+            PORT_OK=true
             break
         fi
         sleep 2
@@ -337,19 +349,13 @@ if [[ "$OSTYPE" == "linux"* ]]; then
 
     if [ "$SERVICE_OK" = "false" ]; then
         echo -e "${RED}Service failed to start${NC}"
+        # Try to show logs if systemd is available
         sudo -n journalctl -u controlsphere --no-pager -n 30 2>/dev/null || true
+        # Show direct log if started via nohup
+        tail -20 "$INSTALL_DIR/logs/server-stdout.log" 2>/dev/null || true
         write_status "failed" "Service failed to start"
         exit 1
     fi
-
-    # Service is active — additionally verify port is open (informational, non-fatal)
-    for i in $(seq 1 10); do
-        if ss -tlnp 2>/dev/null | grep -q ':3000 '; then
-            PORT_OK=true
-            break
-        fi
-        sleep 2
-    done
 
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     sleep 5
