@@ -182,6 +182,15 @@ async function bootstrap(): Promise<void> {
     shuttingDown = true
     logger.info('ShutdownSignal', { signal })
 
+    // Hard limit: open keep-alive/WebSocket sockets can keep httpServer.stop()
+    // pending forever, and systemd would SIGKILL us only after 90 s – that
+    // whole time counts as downtime on every restart/deploy.
+    const SHUTDOWN_TIMEOUT_MS = Number(process.env.SHUTDOWN_TIMEOUT_MS) || 8000
+    setTimeout(() => {
+      logger.warn('ShutdownTimeout', { afterMs: SHUTDOWN_TIMEOUT_MS })
+      process.exit(0)
+    }, SHUTDOWN_TIMEOUT_MS).unref()
+
     // Stop background services
     updateChecker.stopPeriodicCheck()
     notificationService.shutdown()
@@ -194,8 +203,12 @@ async function bootstrap(): Promise<void> {
       try { agent.close(1001, 'Server shutting down') } catch {}
     }
 
-    // Stop HTTP server (drains in-flight requests)
-    try { await httpServer.stop() } catch {}
+    // Stop HTTP server (drains in-flight requests), then drop idle keep-alive sockets
+    const nodeServer: any = httpServer.instance
+    const stopping = httpServer.stop().catch(() => {})
+    try { nodeServer?.closeIdleConnections?.() } catch {}
+    await Promise.race([stopping, new Promise((r) => setTimeout(r, 5000))])
+    try { nodeServer?.closeAllConnections?.() } catch {}
 
     // Disconnect Prisma
     try { await prisma.$disconnect() } catch {}
