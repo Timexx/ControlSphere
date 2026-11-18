@@ -646,6 +646,7 @@ export class AgentConnectionManager {
       })
 
       this.registry.clearCommand(commandId)
+      this.registry.finishAgentUpdate(commandId)
     }
   }
 

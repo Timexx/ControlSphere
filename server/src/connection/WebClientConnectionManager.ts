@@ -14,6 +14,16 @@ import type { MachineAccess } from './ConnectionRegistry'
 // Relative imports only: '@/...' aliases do not resolve in the ts-node custom server
 // (which is also why lib/audit.ts cannot be used here).
 import { canAccessMachine, getAccessibleMachineIds, type UserRole } from '../lib/authorization'
+import { getAgentBinary } from '../lib/agent-manifest'
+import { randomBytes } from 'crypto'
+
+/** Rollback of a broken update can take ~3.5 min (3 × 60 s watchdog + restarts). */
+const AGENT_UPDATE_TIMEOUT_MS = 6 * 60_000
+
+/** Agent OS for the manifest lookup (osInfo JSON as stored on register). */
+export function agentOsFromOsInfo(osInfo: string | null | undefined): 'linux' | 'windows' {
+  return /windows/i.test(osInfo || '') ? 'windows' : 'linux'
+}
 
 const VALID_ROLES: UserRole[] = ['admin', 'user', 'viewer']
 const ACCESS_REFRESH_MS = 60_000
@@ -623,30 +633,122 @@ export class WebClientConnectionManager {
   }
 
   /**
-   * Handle update agent request
+   * Handle update agent request (admin only, see MESSAGE_POLICY).
+   *
+   * The browser only names the machine. Target version, SHA-256 and size come
+   * from the server's agent manifest, and the message is HMAC-signed with the
+   * machine secret like execute_command. The agent derives the download URL
+   * from its own configured server URL, so no URL is ever sent.
    */
   private async handleUpdateAgent(data: any): Promise<void> {
-    const { machineId, commandId, serverUrl } = data
+    const { machineId, userId, clientWs } = data
+    const commandId: string =
+      typeof data.commandId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(data.commandId)
+        ? data.commandId
+        : `upd-${randomBytes(8).toString('hex')}`
+    const reject = (output: string, exitCode = 1) => {
+      this.logger.warn('UpdateAgentRejected', { machineId, reason: output.trim() })
+      this.sendCommandResult(clientWs, machineId, commandId, output, exitCode)
+    }
 
-    if (!machineId || !serverUrl) {
+    if (!machineId || !userId) {
       this.logger.warn('UpdateAgentMissingFields', { machineId })
       return
     }
 
     const agentWs = this.registry.getMachine(machineId)
     if (!agentWs || agentWs.readyState !== 1) {
-      this.logger.warn('AgentNotConnected', { machineId })
+      reject('Agent ist nicht verbunden.\n')
       return
     }
 
-    this.logger.info('UpdateAgentTriggered', { machineId, serverUrl })
+    const machine = await this.prisma.machine.findUnique({
+      where: { id: machineId },
+      select: { secretKey: true, agentVersion: true, agentArch: true, osInfo: true },
+    })
+    if (!machine || !machine.secretKey) {
+      reject('Maschine oder Maschinen-Secret nicht gefunden.\n')
+      return
+    }
+    if (!machine.agentVersion || !machine.agentArch) {
+      reject('Dieser Agent meldet keine Version und kann sich nicht selbst aktualisieren – einmalige Neuinstallation über install-agent.sh nötig.\n')
+      return
+    }
 
-    agentWs.send(
-      JSON.stringify({
-        type: 'update_agent',
-        data: { commandId, serverUrl }
+    const os = agentOsFromOsInfo(machine.osInfo)
+    const entry = await getAgentBinary(os, machine.agentArch)
+    if (!entry) {
+      reject(`Kein Agent-Build für ${os}/${machine.agentArch} im Manifest.\n`)
+      return
+    }
+    const { manifest, binary } = entry
+    if (manifest.version === machine.agentVersion) {
+      reject(`Agent ist bereits aktuell (${manifest.version}).\n`, 0)
+      return
+    }
+    // Check and reserve without an await in between (no double updates)
+    if (this.registry.hasPendingAgentUpdate(machineId)) {
+      reject('Für diese Maschine läuft bereits ein Update.\n')
+      return
+    }
+    const timer = setTimeout(() => {
+      // Still pending → neither success nor failure was reported by the agent
+      if (this.registry.finishAgentUpdate(commandId)) {
+        this.logger.warn('UpdateAgentTimeout', { machineId, commandId, targetVersion: manifest.version })
+        this.broadcast({
+          type: 'command_output', machineId, commandId, completed: false,
+          output: `Keine Rückmeldung des Agents innerhalb von ${AGENT_UPDATE_TIMEOUT_MS / 60_000} Minuten – Status der Maschine prüfen.\n`,
+        })
+        this.broadcast({ type: 'command_completed', machineId, commandId, exitCode: 1, timestamp: new Date() })
+      }
+    }, AGENT_UPDATE_TIMEOUT_MS)
+    timer.unref?.()
+    this.registry.startAgentUpdate(commandId, { machineId, targetVersion: manifest.version, timer })
+
+    let secureMessage
+    try {
+      const plainSecret = this.secretEncryption.decrypt(machine.secretKey)
+      const sessionToken = await this.terminalService.issueSessionToken(userId, machineId, ['update_agent'])
+      secureMessage = await this.terminalService.createSecureMessage(
+        sessionToken,
+        'update_agent',
+        { commandId, version: manifest.version, sha256: binary.sha256, size: binary.size },
+        plainSecret
+      )
+    } catch (error) {
+      this.registry.finishAgentUpdate(commandId)
+      reject(`Update konnte nicht signiert werden: ${(error as Error).message}\n`)
+      return
+    }
+    this.registry.setCommandSession(commandId, machineId)
+
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'AGENT_UPDATE',
+          userId,
+          machineId,
+          severity: 'info',
+          details: JSON.stringify({ commandId, from: machine.agentVersion, to: manifest.version, os, arch: machine.agentArch, sha256: binary.sha256 }),
+        },
       })
-    )
+    } catch {
+      // auditing must never block the update
+    }
+
+    this.logger.info('UpdateAgentTriggered', { machineId, commandId, from: machine.agentVersion, to: manifest.version })
+    agentWs.send(JSON.stringify({ type: 'update_agent', data: secureMessage.data }))
+  }
+
+  /** Send a server-generated command result to one browser connection. */
+  private sendCommandResult(ws: WebSocket | undefined, machineId: string, commandId: string, output: string, exitCode: number): void {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    try {
+      ws.send(JSON.stringify({ type: 'command_output', machineId, commandId, output, completed: false }))
+      ws.send(JSON.stringify({ type: 'command_completed', machineId, commandId, exitCode, timestamp: new Date() }))
+    } catch {
+      // socket closing
+    }
   }
 
   /**

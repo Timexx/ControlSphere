@@ -115,6 +115,29 @@ export class ConnectionRegistry {
     this.commandSessions.delete(commandId)
   }
 
+  // ── agent self-updates in flight (commandId → info) ─────────────────────
+  private agentUpdates = new Map<string, { machineId: string; targetVersion: string; timer: NodeJS.Timeout }>()
+
+  startAgentUpdate(commandId: string, info: { machineId: string; targetVersion: string; timer: NodeJS.Timeout }): void {
+    this.agentUpdates.set(commandId, info)
+  }
+
+  hasPendingAgentUpdate(machineId: string): boolean {
+    for (const info of this.agentUpdates.values()) {
+      if (info.machineId === machineId) return true
+    }
+    return false
+  }
+
+  /** Marks an update as finished. Returns true if it was still pending. */
+  finishAgentUpdate(commandId: string): boolean {
+    const info = this.agentUpdates.get(commandId)
+    if (!info) return false
+    clearTimeout(info.timer)
+    this.agentUpdates.delete(commandId)
+    return true
+  }
+
   setWebClient(ws: WebSocket, info: WebClientSessionInfo): void {
     this.webClientSessions.set(ws, info)
   }

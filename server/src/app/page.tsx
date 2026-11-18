@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, type ReactNode } from 'react'
+import { useEffect, useState, useCallback, useRef, type ReactNode } from 'react'
 import Link from 'next/link'
 import { formatDistanceToNow } from 'date-fns'
 import { de, enUS } from 'date-fns/locale'
@@ -16,6 +16,7 @@ interface Machine {
   hostname: string
   ip: string
   osInfo: string | null
+  agentVersion?: string | null
   status: string
   lastSeen: string
   openSecurityEvents?: number
@@ -41,6 +42,38 @@ export default function DashboardPage() {
   const [machines, setMachines] = useState<Machine[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null)
+  const [userRole, setUserRole] = useState<string | null>(null)
+  const [bulkStarted, setBulkStarted] = useState<number | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+
+  useEffect(() => {
+    fetch('/api/agent-manifest')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setLatestAgentVersion(d?.version ?? null))
+      .catch(() => {})
+    fetch('/api/auth/session-time')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setUserRole(d?.role ?? null))
+      .catch(() => {})
+  }, [])
+
+  // Online agents that report an older version can update themselves;
+  // agents without a version need a one-time reinstall.
+  const outdatedAgents = latestAgentVersion
+    ? machines.filter((m) => m.status === 'online' && m.agentVersion && m.agentVersion !== latestAgentVersion)
+    : []
+  const legacyAgents = machines.filter((m) => !m.agentVersion)
+
+  const updateOutdatedAgents = () => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    for (const m of outdatedAgents) {
+      const commandId = `bulk-${Math.random().toString(36).slice(2, 12)}`
+      ws.send(JSON.stringify({ type: 'update_agent', machineId: m.id, commandId }))
+    }
+    setBulkStarted(outdatedAgents.length)
+  }
 
   const fetchMachines = useCallback(async () => {
     try {
@@ -108,11 +141,15 @@ export default function DashboardPage() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const wsUrl = `${protocol}//${window.location.host}/ws/web?token=${encodeURIComponent(token)}`
         ws = new WebSocket(wsUrl)
+        wsRef.current = ws
 
         ws.onmessage = (event) => {
           if (!mounted) return
           try {
             const data = JSON.parse(event.data)
+            if (data.type === 'command_completed' && typeof data.commandId === 'string' && data.commandId.startsWith('bulk-')) {
+              fetchMachines()
+            }
             if (data.type === 'new_machine') {
               setMachines((prev) => {
                 if (prev.some((m) => m.id === data.machine.id)) {
@@ -274,6 +311,30 @@ export default function DashboardPage() {
             })()}
           </div>
         </div>
+
+        {userRole === 'admin' && latestAgentVersion && (outdatedAgents.length > 0 || legacyAgents.length > 0) && (
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-purple-500/30 bg-purple-500/5 px-4 py-3">
+            <div className="text-sm text-slate-200">
+              {outdatedAgents.length > 0 && (
+                <p>{t('agentUpdate.outdated', { count: outdatedAgents.length, version: latestAgentVersion })}</p>
+              )}
+              {legacyAgents.length > 0 && (
+                <p className="text-slate-400">{t('agentUpdate.legacy', { count: legacyAgents.length })}</p>
+              )}
+            </div>
+            {outdatedAgents.length > 0 && (
+              <button
+                onClick={updateOutdatedAgents}
+                disabled={bulkStarted !== null}
+                className="shrink-0 rounded-lg border border-purple-400/40 bg-purple-500/10 px-4 py-2 text-sm font-medium text-purple-100 hover:bg-purple-500/20 disabled:opacity-50"
+              >
+                {bulkStarted !== null
+                  ? t('agentUpdate.started', { count: bulkStarted })
+                  : t('agentUpdate.button')}
+              </button>
+            )}
+          </div>
+        )}
 
         {loading && machines.length === 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">

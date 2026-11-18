@@ -259,7 +259,7 @@ export class SecureRemoteTerminalService {
    */
   async createSecureMessage(
     sessionToken: SessionToken,
-    type: 'terminal_input' | 'terminal_resize' | 'execute_command' | 'terminal_spawn',
+    type: 'terminal_input' | 'terminal_resize' | 'execute_command' | 'terminal_spawn' | 'update_agent',
     payload: string | Record<string, any>,
     agentSecret: string // Machine's registration secret (or hash)
   ): Promise<SecureMessage> {
@@ -282,6 +282,15 @@ export class SecureRemoteTerminalService {
       normalizedPayloadObj = {
         commandId: p.commandId ?? '',
         command: p.command ?? ''
+      }
+    } else if (type === 'update_agent') {
+      // Fixed key order; the agent derives the download URL itself
+      const p = (payload as { commandId?: string; version?: string; sha256?: string; size?: number }) || {}
+      normalizedPayloadObj = {
+        commandId: p.commandId ?? '',
+        version: p.version ?? '',
+        sha256: p.sha256 ?? '',
+        size: Number(p.size ?? 0)
       }
     } else if (typeof payload === 'string') {
       // If already a string, parse it back to object for normalization

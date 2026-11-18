@@ -137,7 +137,10 @@ const messages = {
       disconnected: 'Disconnected',
       online: 'Online',
       offline: 'Offline',
-      live: 'Live connected'
+      live: 'Live connected',
+      agentVersion: 'Agent version',
+      agentVersionUnknown: 'unknown (reinstall required)',
+      agentOutdated: '{version} – outdated (latest: {latest})'
     },
     system: {
       title: 'System information',
@@ -959,6 +962,12 @@ const messages = {
     close: 'Close',
   },
   dashboard: {
+    agentUpdate: {
+      outdated: '{count, plural, one {# agent is} other {# agents are}} outdated (latest: {version}).',
+      legacy: '{count, plural, one {# agent reports} other {# agents report}} no version and {count, plural, one {needs} other {need}} a one-time reinstall.',
+      button: 'Update outdated agents',
+      started: '{count} updates started',
+    },
     loading: 'Calibrating systems...',
     hero: {
       eyebrow: 'SYSTEM OVERVIEW',

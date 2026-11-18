@@ -169,6 +169,10 @@ if ! $SKIP_MIGRATE; then
   npx --no-install prisma migrate deploy
 fi
 
+# ── agent binaries (rebuilt only if agent/ changed; atomic publish) ──────
+log "agent binaries"
+bash "$SERVER_DIR/scripts/build-agents-if-needed.sh" || fail "agent build failed"
+
 # ── build into staging ───────────────────────────────────────────────────
 log "building into $STAGING"
 rm -rf "$STAGING"

@@ -126,8 +126,13 @@ const MESSAGE_SCHEMAS: Record<string, any> = {
 
   update_agent: {
     required: ['machineId'],
-    optional: ['type'],
-    validate: null
+    optional: ['type', 'commandId'],
+    validate: (data: any) => {
+      if (data.commandId !== undefined && (typeof data.commandId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(data.commandId))) {
+        return 'Invalid commandId'
+      }
+      return null
+    }
   },
 
   trigger_scan: {

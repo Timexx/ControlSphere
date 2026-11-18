@@ -83,6 +83,8 @@ interface Machine {
   hostname: string
   ip: string
   osInfo: string | null
+  agentVersion?: string | null
+  agentArch?: string | null
   status: string
   lastSeen: string
   createdAt: string
@@ -233,6 +235,14 @@ export default function MachinePage() {
   const [showSmoothing, setShowSmoothing] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
   const [userRole, setUserRole] = useState<string | null>(null)
+  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/agent-manifest')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setLatestAgentVersion(d?.version ?? null))
+      .catch(() => {})
+  }, [])
   const [showUpdateDialog, setShowUpdateDialog] = useState(false)
   
   // Sync ref with state
@@ -316,7 +326,8 @@ export default function MachinePage() {
             }
             
             // If machine comes online after agent update, end executing state
-            if (data.status === 'online' && executingRef.current && (executingRef.current.includes('install-agent.sh') || executingRef.current === 'Agent Update')) {
+            // Agent updates finish via command_completed (the agent confirms after re-registering)
+            if (data.status === 'online' && executingRef.current && executingRef.current.includes('install-agent.sh')) {
               console.log('✅ Agent reconnected after update - ending executing state')
               setExecuting(null)
             }
@@ -576,36 +587,14 @@ export default function MachinePage() {
     }))
   }
 
-  const updateAgent = async () => {
+  const updateAgent = () => {
     if (!machine || !socket || socket.readyState !== WebSocket.OPEN) return
-    
-    try {
-      // Get server IP for the agent to download source code
-      const res = await fetch('/api/server-info')
-      const data = await res.json()
-      const serverUrl = `http://${data.ip}:${data.port}`
-      
-      const commandId = Math.random().toString(36).substring(7)
-      setExecuting('Agent Update')
-      
-      // Show log dialog
-      setCommandLogDialog({ command: 'Agent Update (Build from Source)', commandId })
-      
-      // Send update_agent message via WebSocket
-      // This triggers the agent's robust self-update mechanism which:
-      // 1. Creates an external update script
-      // 2. Runs it independently with setsid/nohup
-      // 3. The script handles service stop/restart safely
-      socket.send(JSON.stringify({
-        type: 'update_agent',
-        machineId: machine.id,
-        commandId,
-        serverUrl,
-      }))
-    } catch (error) {
-      console.error('Failed to update agent:', error)
-      alert(t('errors.agentUpdate'))
-    }
+    // The server picks version, checksum and download location from its agent
+    // manifest and signs the request; the browser only names the machine.
+    const commandId = `upd-${Math.random().toString(36).slice(2, 12)}`
+    setExecuting('Agent Update')
+    setCommandLogDialog({ command: 'Agent Update', commandId })
+    socket.send(JSON.stringify({ type: 'update_agent', machineId: machine.id, commandId }))
   }
 
   const deleteMachine = async () => {
@@ -1018,6 +1007,16 @@ export default function MachinePage() {
             <div className="space-y-3">
               <h2 className="text-lg font-semibold text-white mb-2">{t('status.title')}</h2>
               <StatusRow label={t('status.lastSeen')} value={lastSeenDisplay} />
+              <StatusRow
+                label={t('status.agentVersion')}
+                value={
+                  !machine.agentVersion
+                    ? t('status.agentVersionUnknown')
+                    : latestAgentVersion && machine.agentVersion !== latestAgentVersion
+                      ? t('status.agentOutdated', { version: machine.agentVersion, latest: latestAgentVersion })
+                      : machine.agentVersion
+                }
+              />
               <StatusRow label={t('status.added')} value={formatDistanceToNow(new Date(machine.createdAt), { addSuffix: true, locale: dateLocale })} />
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-400">{t('status.connection')}</span>
@@ -1136,13 +1135,18 @@ export default function MachinePage() {
                         badge={securitySummary.availableUpdates + securitySummary.securityUpdates || undefined}
                       />
                     )}
-                    <ActionButton
-                      onClick={updateAgent}
-                      disabled={!isOnline || !!executing || rebooting}
-                      tone="purple"
-                      icon={<PackageCheck className="h-5 w-5" />}
-                      label={t('actions.agentUpdate')}
-                    />
+                    {userRole === 'admin' && (
+                      <ActionButton
+                        onClick={updateAgent}
+                        disabled={
+                          !isOnline || !!executing || rebooting || !machine.agentVersion ||
+                          !latestAgentVersion || machine.agentVersion === latestAgentVersion
+                        }
+                        tone="purple"
+                        icon={<PackageCheck className="h-5 w-5" />}
+                        label={t('actions.agentUpdate')}
+                      />
+                    )}
                     <ActionButton
                       onClick={() => handleCommand('reboot')}
                       disabled={!isOnline || !!executing || rebooting}

@@ -149,13 +149,14 @@ describe('WebClientConnectionManager security', () => {
       expect(agentWs.send).not.toHaveBeenCalled()
     })
 
-    it('admin can update_agent and it reaches the agent', async () => {
+    it('admin passes the policy for update_agent (signed path: see updateAgent tests)', async () => {
       mocks.findUnique.mockResolvedValue({ role: 'admin', active: true, username: 'root' })
       mocks.getAccessibleMachineIds.mockResolvedValue('all')
+      const handler = vi.spyOn(manager as any, 'handleUpdateAgent').mockResolvedValue(undefined)
       const ws = await connect()
       send(ws, { type: 'update_agent', machineId: 'm1', serverUrl: 'http://x' })
-      await vi.waitFor(() => expect(agentWs.send).toHaveBeenCalledTimes(1))
-      expect(JSON.parse(agentWs.send.mock.calls[0][0])).toMatchObject({ type: 'update_agent', data: { serverUrl: 'http://x' } })
+      await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1))
+      expect(clientMessages(ws).some((m) => m.message === 'Forbidden')).toBe(false)
     })
 
     it('registers the client with its resolved role and machine access', async () => {
