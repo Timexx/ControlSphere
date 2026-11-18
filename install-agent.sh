@@ -20,7 +20,20 @@ else
 fi
 
 SERVER_URL="ws://${SERVER_HOST}:${SERVER_PORT}/ws/agent"
-DOWNLOAD_URL="http://${SERVER_HOST}:${SERVER_PORT}/api/agent-download?os=linux&arch=amd64"
+
+# Architecture
+case "$(uname -m)" in
+    x86_64)        DL_ARCH="amd64" ;;
+    aarch64|arm64) DL_ARCH="arm64" ;;
+    *)
+        echo -e "${RED}Error: Unsupported architecture: $(uname -m)${NC}"
+        exit 1
+        ;;
+esac
+DOWNLOAD_URL="http://${SERVER_HOST}:${SERVER_PORT}/api/agent-download?os=linux&arch=${DL_ARCH}"
+TARGET_BIN="/usr/local/bin/maintainer-agent"
+TMP_BIN="/usr/local/bin/.maintainer-agent.download"
+trap 'rm -f "$TMP_BIN"' EXIT
 
 echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  Maintainer Agent - Smart Install/Update${NC}"
@@ -43,51 +56,48 @@ else
 fi
 echo ""
 
-# Stop existing agent if running
-if systemctl is-active --quiet maintainer-agent 2>/dev/null; then
-    echo -e "${YELLOW}[1/7] Stopping existing agent...${NC}"
-    systemctl stop maintainer-agent
-    echo -e "${GREEN}✓ Agent stopped${NC}"
+# Download + verify BEFORE touching the running agent
+echo -e "${YELLOW}[1/7] Downloading new agent binary...${NC}"
+echo -e "${BLUE}   URL: $DOWNLOAD_URL${NC}"
+rm -f "$TMP_BIN"
+if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$TMP_BIN" "$DOWNLOAD_URL" || { echo -e "${RED}Error: Could not download agent from $DOWNLOAD_URL${NC}"; exit 1; }
+elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$TMP_BIN" "$DOWNLOAD_URL" || { echo -e "${RED}Error: Could not download agent from $DOWNLOAD_URL${NC}"; exit 1; }
 else
-    echo -e "${YELLOW}[1/7] No running agent to stop${NC}"
+    echo -e "${RED}Error: Neither curl nor wget found${NC}"
+    exit 1
 fi
+
+MAGIC=$(head -c 4 "$TMP_BIN" | od -An -tx1 | tr -d '[:space:]')
+if [ "$MAGIC" != "7f454c46" ]; then
+    echo -e "${RED}Error: Downloaded file is not an ELF binary - running agent left unchanged${NC}"
+    exit 1
+fi
+chmod 755 "$TMP_BIN"
+BINARY_SIZE=$(ls -lh "$TMP_BIN" | awk '{print $5}')
+echo -e "${GREEN}✓ Binary downloaded and checked ($BINARY_SIZE)${NC}"
 echo ""
 
 # Backup existing binary if exists
 if [ "$IS_UPDATE" = true ]; then
     echo -e "${YELLOW}[2/7] Backing up existing binary...${NC}"
     BACKUP_FILE="/usr/local/bin/maintainer-agent.backup-$(date +%Y%m%d-%H%M%S)"
-    cp /usr/local/bin/maintainer-agent "$BACKUP_FILE"
+    cp -p "$TARGET_BIN" "$BACKUP_FILE"
     echo -e "${GREEN}✓ Backup created: $BACKUP_FILE${NC}"
 else
     echo -e "${YELLOW}[2/7] No existing binary to backup${NC}"
 fi
 echo ""
 
-# Download new agent binary
-echo -e "${YELLOW}[3/7] Downloading new agent binary...${NC}"
-echo -e "${BLUE}   URL: $DOWNLOAD_URL${NC}"
-
-if curl -f -L -o /usr/local/bin/maintainer-agent "$DOWNLOAD_URL" 2>/dev/null; then
-    chmod +x /usr/local/bin/maintainer-agent
-    BINARY_SIZE=$(ls -lh /usr/local/bin/maintainer-agent | awk '{print $5}')
-    echo -e "${GREEN}✓ Binary downloaded ($BINARY_SIZE)${NC}"
-else
-    echo -e "${RED}✗ Download failed!${NC}"
-    
-    if [ "$IS_UPDATE" = true ] && [ -f "$BACKUP_FILE" ]; then
-        echo -e "${YELLOW}Restoring backup...${NC}"
-        mv "$BACKUP_FILE" /usr/local/bin/maintainer-agent
-        systemctl start maintainer-agent
-    fi
-    
-    echo -e "${RED}Error: Could not download agent from $DOWNLOAD_URL${NC}"
-    echo -e "${YELLOW}Please check:${NC}"
-    echo -e "  1. Server is running"
-    echo -e "  2. Binary exists in server/public/downloads/"
-    echo -e "  3. Network connectivity"
-    exit 1
+# Stop existing agent, replace binary
+echo -e "${YELLOW}[3/7] Replacing agent binary...${NC}"
+if systemctl is-active --quiet maintainer-agent 2>/dev/null; then
+    systemctl stop maintainer-agent
+    echo -e "${GREEN}✓ Agent stopped${NC}"
 fi
+mv -f "$TMP_BIN" "$TARGET_BIN"
+echo -e "${GREEN}✓ Binary installed${NC}"
 echo ""
 
 # Handle configuration
