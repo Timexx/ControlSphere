@@ -43,13 +43,11 @@ export default function CommandLogDialog({
           data.machineId === machineId &&
           data.commandId === commandId
         
-        // For agent updates, also listen for machine coming back online
-        const isMachineOnline = 
-          data.type === 'machine_status_changed' &&
-          data.machineId === machineId &&
-          data.status === 'online' &&
-          isAgentUpdate
-        
+        // Agent updates: the server reports the result via command_completed
+        // (success after the new agent registered, failure, rollback or its own
+        // timeout). "Machine online" is NOT a success signal: after a rollback
+        // the OLD agent comes back online.
+
         if (isCommandOutput) {
           if (data.output) {
             setLogs(prev => prev + data.output)
@@ -71,13 +69,6 @@ export default function CommandLogDialog({
           setIsRunning(false)
           setExitCode(prev => data.exitCode ?? prev)
         }
-        
-        // Agent update: when machine comes back online, mark as completed
-        if (isMachineOnline) {
-          setLogs(prev => prev + '\n\n✅ Agent reconnected successfully!\n')
-          setIsRunning(false)
-          setExitCode(prev => prev ?? 0)
-        }
       } catch (error) {
         console.error('Failed to parse message:', error)
       }
@@ -85,21 +76,18 @@ export default function CommandLogDialog({
 
     socket.addEventListener('message', handleMessage)
     
-    // Safety timeout for agent updates: if no response after 90 seconds, 
-    // show a helpful message instead of spinning forever
+    // Last-resort fallback for agent updates. The server reports failure after
+    // 6 minutes itself (AGENT_UPDATE_TIMEOUT_MS); a rollback takes ~3.5 minutes.
+    // This only fires if that message never reaches the browser (e.g. the
+    // WebSocket reconnected in between).
     let timeoutId: ReturnType<typeof setTimeout> | null = null
     if (isAgentUpdate) {
       timeoutId = setTimeout(() => {
-        setLogs(prev => prev + '\n\n⚠️ Timeout: Der Agent hat sich nicht innerhalb von 90 Sekunden zurückgemeldet.\n' +
-          'Mögliche Ursachen:\n' +
-          '  - Windows Defender blockiert den neuen Agent\n' +
-          '  - Das Update-Script ist fehlgeschlagen\n' +
-          '\nPrüfe auf dem System:\n' +
-          '  Get-Content C:\\ProgramData\\maintainer-agent\\update.log\n' +
-          '  Get-Service MaintainerAgent\n')
+        setLogs(prev => prev + '\n\n⚠️ Keine Rückmeldung vom Server innerhalb von 7 Minuten.\n' +
+          'Den aktuellen Stand (Agent-Version, online/offline) zeigt die Maschinenseite nach dem Neuladen.\n')
         setIsRunning(false)
         setExitCode(prev => prev ?? -1)
-      }, 90000)
+      }, 7 * 60_000)
     }
 
     return () => {
