@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { getSession } from '@/lib/auth'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 // This endpoint triggers a security scan on the specified machine
 // ISO 27001 A.12.6.1: Technical vulnerability management
@@ -11,17 +11,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: machineId } = await params
+  const guard = await guardMachineAccess(machineId, 'write')
+  if (!guard.ok) return guard.response
+  const sessionUser = guard.user
   try {
-    
-    // Get authenticated session
-    const session = await getSession()
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
-
     // Verify machine exists
     const machine = await prisma.machine.findUnique({
       where: { id: machineId },
@@ -52,12 +45,12 @@ export async function POST(
         data: {
           action: 'SECURITY_SCAN_TRIGGERED',
           eventType: 'security_scan',
-          userId: session.user.id,
+          userId: sessionUser.id,
           machineId: machine.id,
           severity: 'info',
           details: JSON.stringify({
             hostname: machine.hostname,
-            triggeredBy: session.user.username || session.user.id,
+            triggeredBy: sessionUser.username || sessionUser.id,
             ip,
             userAgent,
             timestamp: new Date().toISOString()

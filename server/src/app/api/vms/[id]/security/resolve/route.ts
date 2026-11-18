@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { realtimeEvents } from '@/lib/realtime-events'
 import { refreshSecurityCacheForMachine } from '@/lib/state-cache'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 // POST: Mark all open security events as resolved for a machine
 export async function POST(
@@ -10,7 +11,9 @@ export async function POST(
 ) {
   try {
     const { id: machineId } = await params
-    
+    const guard = await guardMachineAccess(machineId, 'write')
+    if (!guard.ok) return guard.response
+
     // Check if machine exists
     const machine = await prisma.machine.findUnique({
       where: { id: machineId },
@@ -62,6 +65,8 @@ export async function PATCH(
 ) {
   try {
     const { id: machineId } = await params
+    const guard = await guardMachineAccess(machineId, 'write')
+    if (!guard.ok) return guard.response
     const body = await request.json()
     const eventIds = body.eventIds as string[] | undefined
     const status = body.status as string || 'resolved'

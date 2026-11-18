@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { getCveMirrorState, triggerCveMirrorOnce } from '../../../../services/cve-mirror'
 import { prisma } from '@/lib/prisma'
+import { guardRole } from '@/lib/route-guards'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,8 @@ export async function GET() {
 }
 
 export async function POST() {
+  const guard = await guardRole('admin')
+  if (!guard.ok) return guard.response
   try {
     const result = await triggerCveMirrorOnce()
     const state = await getCveMirrorState()

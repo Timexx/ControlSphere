@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { stateCache } from '@/lib/state-cache'
-import { getSession } from '@/lib/auth'
-import { canAccessMachine } from '@/lib/authorization'
 import { createAuditEntry, AuditActions } from '@/lib/audit'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 export async function DELETE(
   request: NextRequest,
@@ -12,14 +11,13 @@ export async function DELETE(
   try {
     const { id } = await params
 
-    // Only admin or machine creator can delete
-    const session = await getSession()
-    const userId = session?.user?.id
-    const role = session?.user?.role || 'viewer'
+    // Auth + role + machine access (401 without session, 403 for viewers)
+    const guard = await guardMachineAccess(id, 'write')
+    if (!guard.ok) return guard.response
 
-    if (role === 'viewer') {
-      return NextResponse.json({ error: 'Forbidden: Viewers cannot delete machines' }, { status: 403 })
-    }
+    // Only admin or machine creator can delete
+    const userId = guard.user.id
+    const role = guard.user.role
 
     if (role !== 'admin') {
       // Non-admin users can only delete their own machines

@@ -1,34 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { stateCache } from '@/lib/state-cache'
-import { getSession } from '@/lib/auth'
-import { canAccessMachine } from '@/lib/authorization'
-import { createAuditEntry, AuditActions } from '@/lib/audit'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await guardMachineAccess(id, 'read')
+  if (!guard.ok) return guard.response
   try {
-    // Access control
-    const session = await getSession()
-    const userId = session?.user?.id
-    const role = session?.user?.role || 'viewer'
-    if (userId) {
-      const hasAccess = await canAccessMachine(userId, role as any, id)
-      if (!hasAccess) {
-        await createAuditEntry({
-          action: AuditActions.MACHINE_ACCESS_DENIED,
-          userId,
-          machineId: id,
-          severity: 'warn',
-          details: { reason: 'No machine access', role },
-        })
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-      }
-    }
-
     // Fast path: serve base data from cache, enrich with commands/links/disks from DB
     const cached = stateCache.ready ? stateCache.getMachine(id) : null
     if (cached) {
@@ -175,6 +157,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await guardMachineAccess(id, 'write')
+  if (!guard.ok) return guard.response
   try {
     const body = await request.json()
     const notes = typeof body.notes === 'string' ? body.notes : ''

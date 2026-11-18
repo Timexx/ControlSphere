@@ -2,12 +2,15 @@ import { NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getScanProgress } from '@/lib/scan-progress-store'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await guardMachineAccess(id, 'read')
+  if (!guard.ok) return guard.response
 
   try {
     const machine = await prisma.machine.findUnique({

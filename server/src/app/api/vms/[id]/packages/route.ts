@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id: machineId } = await params
+  const guard = await guardMachineAccess(machineId, 'read')
+  if (!guard.ok) return guard.response
   try {
     const searchParams = request.nextUrl.searchParams
     const status = searchParams.get('status') || undefined

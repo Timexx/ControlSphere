@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 function normalizeUrl(url: string): string {
   const trimmed = url.trim()
@@ -15,6 +16,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await guardMachineAccess(id, 'write')
+  if (!guard.ok) return guard.response
   try {
     const body = await request.json()
     const title = typeof body.title === 'string' ? body.title.trim() : ''
@@ -76,6 +79,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await guardMachineAccess(id, 'write')
+  if (!guard.ok) return guard.response
   try {
     const body = await request.json()
     const linkId = typeof body.linkId === 'string' ? body.linkId : ''

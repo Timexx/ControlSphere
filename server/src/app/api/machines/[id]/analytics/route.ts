@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import type { Metric } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { guardMachineAccess } from '@/lib/route-guards'
 
 const RANGE_TO_HOURS: Record<string, number> = {
   '24h': 24,
@@ -75,6 +76,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params
+  const guard = await guardMachineAccess(id, 'read')
+  if (!guard.ok) return guard.response
   try {
     const { searchParams } = new URL(request.url)
     const rangeData = parseRange(searchParams.get('range'))
