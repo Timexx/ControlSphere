@@ -49,14 +49,8 @@ async function bootstrap(): Promise<void> {
   const jwtAuthService = new JwtAuthService(secretProvider, jwtConfig, logger)
   const secretEncryption = new SecretEncryptionService(await secretProvider())
 
-  const broadcast = (data: any) => {
-    const message = JSON.stringify(data)
-    for (const client of registry.listWebClients()) {
-      if (client.readyState === 1) {
-        client.send(message)
-      }
-    }
-  }
+  // Machine-scoped events only reach clients with access to that machine.
+  const broadcast = (data: any) => registry.broadcastToWebClients(data)
 
   const app = next({ dev, hostname, port, dir: process.cwd() })
   await app.prepare()

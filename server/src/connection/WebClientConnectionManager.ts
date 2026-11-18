@@ -10,6 +10,49 @@ import { MessageValidator } from '../protocol/validator/MessageValidator'
 import { MessageRouter } from '../protocol/router/MessageRouter'
 import { SecureRemoteTerminalService } from '../domain/services/SecureRemoteTerminalService'
 import { SecretEncryptionService } from '../infrastructure/crypto/SecretEncryptionService'
+import type { MachineAccess } from './ConnectionRegistry'
+import type { UserRole } from '../lib/authorization'
+
+// Relative imports only: '@/...' aliases do not resolve in the ts-node custom server.
+async function loadAuthorization() {
+  return import('../lib/authorization')
+}
+async function loadPrisma() {
+  return (await import('../lib/prisma')).prisma
+}
+async function auditDenied(userId: string, machineId: string | undefined, details: Record<string, unknown>) {
+  try {
+    const { createAuditEntry, AuditActions } = await import('../lib/audit')
+    await createAuditEntry({
+      action: AuditActions.MACHINE_ACCESS_DENIED,
+      userId,
+      machineId,
+      severity: 'warn',
+      details,
+    } as any)
+  } catch {
+    // auditing must never break request handling
+  }
+}
+
+const VALID_ROLES: UserRole[] = ['admin', 'user', 'viewer']
+const ACCESS_REFRESH_MS = 60_000
+
+/** Message types a web client may send, and what each one requires. */
+const MESSAGE_POLICY: Record<string, { roles: UserRole[]; machine: boolean }> = {
+  spawn_terminal:  { roles: ['admin', 'user'], machine: true },
+  terminal_input:  { roles: ['admin', 'user'], machine: true },
+  terminal_resize: { roles: ['admin', 'user'], machine: true },
+  execute_command: { roles: ['admin', 'user'], machine: true },
+  trigger_scan:    { roles: ['admin', 'user'], machine: true },
+  update_agent:    { roles: ['admin'],         machine: true },
+}
+
+interface AuthenticatedClient {
+  userId: string
+  username?: string
+  role: UserRole
+}
 
 /**
  * WebClientConnectionManager - Manages WebSocket connections from web clients
@@ -26,8 +69,10 @@ export class WebClientConnectionManager {
   private parser: MessageParser
   private validator: MessageValidator
   private router: MessageRouter
-  private userSessions: Map<string, Set<string>> = new Map() // userId -> Set of sessionIds
+  // browser socket -> terminal sessionIds opened from it (ended when that socket closes)
+  private socketSessions: Map<WebSocket, Set<string>> = new Map()
   private secretEncryption!: SecretEncryptionService
+  private accessRefreshTimer: NodeJS.Timeout | null = null
 
   constructor(
     private readonly prisma: PrismaClient,
@@ -47,6 +92,84 @@ export class WebClientConnectionManager {
 
     // Register handlers for all web client message types
     this.registerHandlers()
+
+    // Keep role + machine access of connected clients fresh (role changes,
+    // revoked access, deactivated users take effect within a minute).
+    this.accessRefreshTimer = setInterval(() => {
+      this.refreshAllClients().catch((error) =>
+        this.logger.warn('WebClientAccessRefreshFailed', { error: (error as Error).message })
+      )
+    }, ACCESS_REFRESH_MS)
+    this.accessRefreshTimer.unref?.()
+  }
+
+  /** Stop background timers (tests / shutdown). */
+  dispose(): void {
+    if (this.accessRefreshTimer) clearInterval(this.accessRefreshTimer)
+    this.accessRefreshTimer = null
+  }
+
+  /** Load role/active flag from the DB. Returns null for unknown or inactive users. */
+  private async loadClientUser(userId: string): Promise<{ role: UserRole; username: string } | null> {
+    const prisma = await loadPrisma()
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true, active: true, username: true },
+    })
+    if (!user || !user.active) return null
+    const role = VALID_ROLES.includes(user.role as UserRole) ? (user.role as UserRole) : 'viewer'
+    return { role, username: user.username }
+  }
+
+  private async loadMachineAccess(userId: string, role: UserRole): Promise<MachineAccess> {
+    const { getAccessibleMachineIds } = await loadAuthorization()
+    const ids = await getAccessibleMachineIds(userId, role)
+    return ids === 'all' ? 'all' : new Set(ids)
+  }
+
+  private async refreshAllClients(): Promise<void> {
+    for (const [ws, info] of Array.from(this.registry.listWebClientEntries())) {
+      const user = await this.loadClientUser(info.userId)
+      if (!user) {
+        this.logger.warn('WebClientRevoked', { userId: info.userId })
+        try { ws.close(1008, 'Unauthorized') } catch {}
+        this.registry.deleteWebClient(ws)
+        continue
+      }
+      const machineAccess = await this.loadMachineAccess(info.userId, user.role)
+      this.registry.updateWebClient(ws, { role: user.role, machineAccess, accessLoadedAt: Date.now() })
+    }
+  }
+
+  /**
+   * Authorize a web client message before it is routed.
+   * Role comes from the (periodically refreshed) DB state, not the JWT.
+   * Privileged one-shot actions re-check machine access against the DB;
+   * high-frequency terminal input relies on the cached access + session ownership.
+   */
+  private async authorizeMessage(ws: WebSocket, client: AuthenticatedClient, type: string, data: any): Promise<string | null> {
+    const policy = MESSAGE_POLICY[type]
+    if (!policy) return 'unsupported message type'
+
+    const info = this.registry.getWebClient(ws)
+    const role = info?.role ?? client.role
+    if (!policy.roles.includes(role)) return `role ${role} not allowed`
+
+    if (policy.machine) {
+      const machineId = typeof data?.machineId === 'string' ? data.machineId : ''
+      if (!machineId) return 'machineId missing'
+
+      if (type === 'terminal_input' || type === 'terminal_resize') {
+        if (!this.registry.canClientSeeMachine(ws, machineId)) return 'no machine access'
+        const sessionId = data?.sessionId
+        if (this.registry.getTerminalSession(sessionId) !== machineId) return 'session does not belong to machine'
+        if (this.registry.getTerminalOwner(sessionId) !== ws) return 'session not owned by this connection'
+      } else {
+        const { canAccessMachine } = await loadAuthorization()
+        if (!(await canAccessMachine(client.userId, role, machineId))) return 'no machine access'
+      }
+    }
+    return null
   }
 
   private async initializeEncryption() {
@@ -98,16 +221,37 @@ export class WebClientConnectionManager {
     this.logger.info('WebClientConnecting', { url: request.url })
 
     // Step 1: Authenticate via JWT
-    const session = await this.authenticate(request)
-    if (!session) {
+    const token = await this.authenticate(request)
+    if (!token) {
       this.logger.warn('WebClientAuthenticationFailed', { url: request.url })
       ws.close(1008, 'Unauthorized')
       return
     }
 
-    // Register authenticated session
-    this.registry.setWebClient(ws, { userId: session.userId, username: session.username })
-    this.logger.info('WebClientAuthenticated', { userId: session.userId, username: session.username })
+    // Step 1b: Resolve role + machine access from the DB (user must exist and be active)
+    let session: AuthenticatedClient
+    try {
+      const user = await this.loadClientUser(token.userId)
+      if (!user) {
+        this.logger.warn('WebClientUserInactiveOrUnknown', { userId: token.userId })
+        ws.close(1008, 'Unauthorized')
+        return
+      }
+      session = { userId: token.userId, username: user.username, role: user.role }
+      const machineAccess = await this.loadMachineAccess(session.userId, session.role)
+      this.registry.setWebClient(ws, {
+        userId: session.userId,
+        username: session.username,
+        role: session.role,
+        machineAccess,
+        accessLoadedAt: Date.now(),
+      })
+    } catch (error) {
+      this.logger.error('WebClientAuthorizationLoadFailed', { error: (error as Error).message })
+      ws.close(1011, 'Internal error')
+      return
+    }
+    this.logger.info('WebClientAuthenticated', { userId: session.userId, username: session.username, role: session.role })
 
     let currentParser = new MessageParser(this.logger)
 
@@ -133,12 +277,31 @@ export class WebClientConnectionManager {
           return
         }
 
-        // Step 4: Route validated message to handler
+        // Step 4: Authorize (role + machine access) before anything reaches an agent
+        const denied = await this.authorizeMessage(ws, session, messageType, validationResult.data)
+        if (denied) {
+          this.logger.warn('WebClientMessageForbidden', {
+            type: messageType,
+            userId: session.userId,
+            machineId: validationResult.data?.machineId,
+            reason: denied,
+          })
+          if (messageType !== 'terminal_input' && messageType !== 'terminal_resize') {
+            await auditDenied(session.userId, validationResult.data?.machineId, { reason: denied, type: messageType, channel: 'websocket' })
+          }
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Forbidden', requestType: messageType }))
+          }
+          return
+        }
+
+        // Step 5: Route validated message to handler
         try {
           const enrichedData = {
             ...validationResult.data,
             userId: session.userId,
-            username: session.username
+            username: session.username,
+            clientWs: ws
           }
           await this.router.route(messageType, enrichedData)
         } catch (error) {
@@ -156,15 +319,15 @@ export class WebClientConnectionManager {
     ws.on('close', async () => {
       this.logger.info('WebClientDisconnected', { userId: session.userId })
 
-      // Cleanup user sessions (end all terminal sessions for this user)
-      await this.cleanupUserSessions(session.userId)
+      // End the terminal sessions opened from this socket (other tabs keep theirs)
+      await this.cleanupSocketSessions(ws, session.userId)
 
       this.registry.deleteWebClient(ws)
     })
 
     ws.on('error', async (error) => {
       this.logger.error('WebClientSocketError', { error: (error as Error).message })
-      await this.cleanupUserSessions(session.userId)
+      await this.cleanupSocketSessions(ws, session.userId)
       this.registry.deleteWebClient(ws)
     })
   }
@@ -176,8 +339,9 @@ export class WebClientConnectionManager {
    */
   private async handleSpawnTerminal(data: any): Promise<void> {
     const { machineId, userId } = data
+    const clientWs: WebSocket | undefined = data.clientWs
 
-    if (!machineId || !userId) {
+    if (!machineId || !userId || !clientWs) {
       this.logger.warn('SpawnTerminalMissingFields', { machineId, userId })
       return
     }
@@ -197,14 +361,14 @@ export class WebClientConnectionManager {
       )
       this.logger.info('SessionTokenIssued', { sessionId: sessionToken.sessionId, userId, machineId })
 
-      // Step 2: Store session mapping for cleanup on disconnect
-      if (!this.userSessions.has(userId)) {
-        this.userSessions.set(userId, new Set())
+      // Step 2: Store session mapping for cleanup when this socket disconnects
+      if (!this.socketSessions.has(clientWs)) {
+        this.socketSessions.set(clientWs, new Set())
       }
-      this.userSessions.get(userId)!.add(sessionToken.sessionId)
+      this.socketSessions.get(clientWs)!.add(sessionToken.sessionId)
 
-      // Step 3: Register terminal session
-      this.registry.setTerminalSession(sessionToken.sessionId, machineId)
+      // Step 3: Register terminal session; output is delivered only to this socket
+      this.registry.setTerminalSession(sessionToken.sessionId, machineId, clientWs)
 
       // Step 4: Send spawn_shell to agent with secure envelope
       agentWs.send(
@@ -217,10 +381,9 @@ export class WebClientConnectionManager {
         })
       )
 
-      // Step 5: Send session info back to web client
-      const webClientWs = this.registry.getWebClientByUserId(userId)
-      if (webClientWs && webClientWs.readyState === 1) {
-        webClientWs.send(
+      // Step 5: Send session info back to the requesting socket
+      if (clientWs.readyState === 1) {
+        clientWs.send(
           JSON.stringify({
             type: 'terminal_session_created',
             sessionId: sessionToken.sessionId,
@@ -604,13 +767,15 @@ export class WebClientConnectionManager {
    * Cleanup user sessions on disconnect
    * ISO 27001 A.12.4.1: End all terminal sessions for user
    */
-  private async cleanupUserSessions(userId: string): Promise<void> {
-    const sessionIds = this.userSessions.get(userId)
+  private async cleanupSocketSessions(ws: WebSocket, userId: string): Promise<void> {
+    const sessionIds = this.socketSessions.get(ws)
+    this.socketSessions.delete(ws)
     if (!sessionIds || sessionIds.size === 0) {
       return
     }
 
     for (const sessionId of sessionIds) {
+      this.registry.deleteTerminalSession(sessionId)
       try {
         await this.terminalService.endSession(sessionId)
         this.logger.debug('SessionEndedOnDisconnect', { sessionId, userId })
@@ -622,7 +787,6 @@ export class WebClientConnectionManager {
       }
     }
 
-    this.userSessions.delete(userId)
     this.logger.info('UserSessionsCleanedUp', { userId, sessionCount: sessionIds.size })
   }
 }

@@ -333,26 +333,27 @@ export class AgentConnectionManager {
           return
         }
 
-        // Step 3: Route validated message to handler
+        // Step 3: Route validated message to handler.
+        // SECURITY: a socket is bound to a machine only by a successful
+        // `register` (secret key checked against secretKeyHash). Every other
+        // message is dropped until then, and the machineId in payloads is
+        // always overwritten with the bound one.
         try {
           if (messageType === 'register') {
             const regData = validationResult.data
-            machineId = await this.handleAgentRegistration(regData, ws)
+            const registeredId = await this.handleAgentRegistration(regData, ws)
+            if (machineId && machineId !== registeredId && this.registry.isCurrentMachineSocket(machineId, ws)) {
+              this.registry.deleteMachine(machineId)
+            }
+            machineId = registeredId
             this.registry.setMachine(machineId, ws)
           } else if (machineId) {
             const enrichedData = { ...validationResult.data, machineId }
             await this.router.route(messageType, enrichedData)
-          } else if (messageType === 'heartbeat') {
-            machineId = validationResult.data?.machineId
-            if (machineId) {
-              const enrichedData = { ...validationResult.data, machineId }
-              await this.router.route(messageType, enrichedData)
-              this.registry.setMachine(machineId, ws)
-            } else {
-              this.logger.warn('HeartbeatMissingMachineId')
-            }
           } else {
-            this.logger.warn('MessageReceivedBeforeRegistration', { type: messageType })
+            // Agents send `register` first on every connect; heartbeats that race
+            // the registration DB write are expected and harmless to drop.
+            this.logger.debug('MessageReceivedBeforeRegistration', { type: messageType })
           }
         } catch (error) {
           this.logger.error('MessageHandlingFailed', { type: messageType, error: (error as Error).message })
@@ -364,7 +365,9 @@ export class AgentConnectionManager {
 
     ws.on('close', async () => {
       this.logger.info('AgentDisconnected', { machineId: machineId ?? 'unknown' })
-      if (machineId) {
+      // Only the socket that is still the machine's active connection may mark
+      // it offline – a stale socket closing after a reconnect must not.
+      if (machineId && this.registry.isCurrentMachineSocket(machineId, ws)) {
         this.registry.deleteMachine(machineId)
         try {
           await orchestrator.handleAgentDisconnect(machineId)
@@ -428,14 +431,30 @@ export class AgentConnectionManager {
   const encryptedSecret = this.secretEncryption.encrypt(data.secretKey)
 
   try {
+    // SECURITY: identify the machine by its secret only. A hostname/IP match is
+    // accepted only for legacy records that never stored a key hash; otherwise
+    // anyone knowing hostname + IP could re-key and take over the machine.
     let machine = await this.prisma.machine.findFirst({
-      where: {
-        OR: [
-          { secretKeyHash: secretKeyHash },
-          { hostname: data.hostname, ip: cleanIP }
-        ]
-      }
+      where: { secretKeyHash }
     })
+    if (!machine) {
+      const sameHost = await this.prisma.machine.findFirst({
+        where: { hostname: data.hostname, ip: cleanIP }
+      })
+      if (sameHost && sameHost.secretKeyHash) {
+        this.logger.warn('AgentRegistrationKeyMismatch', {
+          machineId: sameHost.id,
+          hostname: data.hostname,
+          ip: cleanIP
+        })
+        if (ws) {
+          ws.send(JSON.stringify({ error: 'Secret key does not match the registered machine' }))
+          ws.close(1008, 'Invalid credentials')
+        }
+        throw new Error('Secret key mismatch for existing machine')
+      }
+      machine = sameHost
+    }
 
     if (machine) {
       machine = await this.prisma.machine.update({
@@ -576,6 +595,13 @@ export class AgentConnectionManager {
       return
     }
 
+    // An agent may only answer commands that were sent to its own machine.
+    const commandMachine = this.registry.getCommandMachine(commandId)
+    if (commandMachine && commandMachine !== machineId) {
+      this.logger.warn('CommandResponseMachineMismatch', { commandId, machineId, expected: commandMachine })
+      return
+    }
+
     // Normalize output using Protocol Layer OutputNormalizer
     const normalized = this.normalizer.normalize(output)
 
@@ -633,6 +659,16 @@ export class AgentConnectionManager {
       return
     }
 
+    // The session must belong to this agent's machine and have a live owner.
+    if (this.registry.getTerminalSession(sessionId) !== machineId) {
+      this.logger.warn('TerminalOutputUnknownSession', { sessionId, machineId })
+      return
+    }
+    const ownerWs = this.registry.getTerminalOwner(sessionId)
+    if (!ownerWs || ownerWs.readyState !== WebSocket.OPEN) {
+      return
+    }
+
     // If new secure message format, validate HMAC
     if (data.type === 'terminal_output' && data.data?.hmac) {
       try {
@@ -677,14 +713,15 @@ export class AgentConnectionManager {
     // natively. The OutputNormalizer must NOT be used here because it strips
     // essential control characters (BS 0x08, BEL 0x07, etc.) that are required
     // for proper terminal behavior (backspace, cursor movement, etc.).
+    // Terminal output goes only to the browser socket that opened the session.
     if (output) {
-      this.broadcast({
+      ownerWs.send(JSON.stringify({
         type: 'terminal_output',
         machineId,
         sessionId,
         output,
         timestamp: new Date()
-      })
+      }))
     }
 
     this.logger.debug('TerminalOutputBroadcast', {
