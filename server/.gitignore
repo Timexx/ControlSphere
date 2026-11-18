@@ -8,6 +8,11 @@
 
 # next.js
 /.next/
+/.next-staging/
+/.next-prev/
+/.next-failed/
+/.deploy.lock
+/.deploy-last-good
 /out/
 
 # production

@@ -5,6 +5,9 @@ const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // scripts/deploy.sh builds into .next-staging while the service keeps
+  // serving the current .next; at runtime this is always '.next'.
+  distDir: process.env.NEXT_DIST_DIR || '.next',
   outputFileTracingRoot: path.join(__dirname, '../'),
   env: {
     NEXT_PUBLIC_APP_VERSION: require('./package.json').version,
