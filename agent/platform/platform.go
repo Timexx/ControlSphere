@@ -6,7 +6,6 @@ package platform
 
 import (
 	"os"
-	"os/exec"
 )
 
 // Terminal represents an interactive pseudo-terminal session.
@@ -94,10 +93,6 @@ type Platform interface {
 	// []string{"powershell.exe", "-Command"} for Windows.
 	ShellCommand() []string
 
-	// BackgroundExecCommand returns an *exec.Cmd that runs a command completely
-	// detached so it survives the agent process (used for self-update).
-	BackgroundExecCommand(scriptPath string) *exec.Cmd
-
 	// DangerousCommands returns glob-like patterns for commands that should be
 	// flagged as dangerous (reboot, shutdown, etc.).
 	DangerousCommands() []string
@@ -152,13 +147,6 @@ type Platform interface {
 	// counts — the implementation must update it and use it for threshold
 	// alerting.
 	CheckAuthLogIncremental(failedLoginCounts map[string]int) []SecurityEvent
-
-	// ---------- Self-update ----------
-
-	// GenerateUpdateScript returns a shell script (bash or PowerShell) that
-	// performs an out-of-process agent update: stop service → rebuild → replace
-	// binary → restart service.
-	GenerateUpdateScript(sourceURL, currentBinary string) string
 
 	// ---------- Signal handling ----------
 

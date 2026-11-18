@@ -38,6 +38,7 @@ var (
 	configFile     = flag.String("config", "", "Path to config file (default: OS-specific)")
 	svcInstall     = flag.Bool("install", false, "Install as Windows Service (Windows only)")
 	svcUninstall   = flag.Bool("uninstall", false, "Uninstall Windows Service (Windows only)")
+	showVersion    = flag.Bool("version", false, "Print the agent version and exit")
 )
 
 type Config struct {
@@ -51,8 +52,10 @@ type RegisterMessage struct {
 	Hostname  string `json:"hostname"`
 	IP        string `json:"ip"`
 	OSInfo    OSInfo `json:"osInfo"`
-	SecretKey string `json:"secretKey"`
-	Platform  string `json:"platform"`
+	SecretKey    string `json:"secretKey"`
+	Platform     string `json:"platform"`
+	AgentVersion string `json:"agentVersion"`
+	Arch         string `json:"arch"`
 }
 
 // HeartbeatMessage is sent periodically with metrics and port data
@@ -154,12 +157,6 @@ type CommandResponseData struct {
 	ExitCode  int    `json:"exitCode"`
 }
 
-// UpdateAgentData contains the update command details
-type UpdateAgentData struct {
-	CommandID  string `json:"commandId"`
-	ServerURL  string `json:"serverUrl"`  // Base HTTP URL for downloading the source code
-}
-
 type AuditEvent struct {
 	Action    string    `json:"action"`
 	Message   string    `json:"message,omitempty"`
@@ -210,6 +207,13 @@ type Agent struct {
 	// Track cumulative failed login counts per IP (persists across scans)
 	failedLoginCounts  map[string]int // IP -> total count
 	failedLoginsMu     sync.Mutex
+
+	// Nonces of verified secure messages (replay protection)
+	seenNonces   map[string]time.Time
+	seenNoncesMu sync.Mutex
+
+	// Self-update state of this process (nil if no update is in flight)
+	pending *pendingUpdate
 }
 
 // writeJSON serializes websocket writes to avoid concurrent writer errors.
@@ -268,11 +272,47 @@ func (a *Agent) verifyHMAC(secureData SecureMessageData, messageType string) (in
 		return nil, fmt.Errorf("message timestamp out of acceptable range: %v", age)
 	}
 	if age < -60*time.Second || age > 60*time.Second {
-		log.Printf("⚠️ clock skew detected for %s: %v (session %s)", messageType, age, secureData.SessionID[:8])
+		log.Printf("⚠️ clock skew detected for %s: %v (session %s)", messageType, age, short(secureData.SessionID))
 	}
 
-	log.Printf("✅ HMAC verified for %s (session: %s, nonce: %s)", messageType, secureData.SessionID[:8], secureData.Nonce[:8])
+	// Reject replays of an already accepted message within the skew window
+	if !a.rememberNonce(secureData.Nonce) {
+		return nil, fmt.Errorf("replayed nonce")
+	}
+
+	log.Printf("✅ HMAC verified for %s (session: %s, nonce: %s)", messageType, short(secureData.SessionID), short(secureData.Nonce))
 	return secureData.Payload, nil
+}
+
+// short returns at most the first 8 characters (safe for log output).
+func short(v string) string {
+	if len(v) > 8 {
+		return v[:8]
+	}
+	return v
+}
+
+// rememberNonce records a nonce and reports whether it was new. Entries older
+// than the accepted timestamp window (+margin) are pruned.
+func (a *Agent) rememberNonce(nonce string) bool {
+	a.seenNoncesMu.Lock()
+	defer a.seenNoncesMu.Unlock()
+	if a.seenNonces == nil {
+		a.seenNonces = make(map[string]time.Time)
+	}
+	now := time.Now()
+	if len(a.seenNonces) > 1000 {
+		for n, t := range a.seenNonces {
+			if now.Sub(t) > 11*time.Minute {
+				delete(a.seenNonces, n)
+			}
+		}
+	}
+	if _, seen := a.seenNonces[nonce]; seen {
+		return false
+	}
+	a.seenNonces[nonce] = now
+	return true
 }
 
 func (a *Agent) httpBaseURL() string {
@@ -566,6 +606,11 @@ func (a *Agent) checkAuthLogIncremental() []SecurityEvent {
 func main() {
 	flag.Parse()
 
+	if *showVersion {
+		fmt.Println(Version)
+		return
+	}
+
 	// Windows Service management commands
 	if *svcInstall {
 		if err := installService(); err != nil {
@@ -593,6 +638,11 @@ func main() {
 // runAgent contains the main agent loop. It is called directly in foreground
 // mode and from the Windows Service handler in service mode.
 func runAgent() {
+	log.Printf("runAgent: version=%s", Version)
+
+	// Confirm / roll back a pending self-update before anything else
+	pending := initSelfUpdate()
+
 	// Use platform-specific default config path if not overridden
 	if *configFile == "" {
 		*configFile = platform.Current.ConfigPath()
@@ -625,6 +675,8 @@ func runAgent() {
 		reportedEvents:    make(map[string]time.Time),
 		failedLoginCounts: make(map[string]int),
 		shutdownCh:        make(chan struct{}),
+		seenNonces:        make(map[string]time.Time),
+		pending:           pending,
 	}
 
 	// Handle graceful shutdown with platform-appropriate signals
@@ -797,13 +849,20 @@ func (a *Agent) register() error {
 	ip := platform.Current.GetOutboundIP()
 	osInfo := platform.Current.GetOSInfo()
 
+	if selfTestSkipRegister == "1" {
+		log.Println("selfTestSkipRegister=1: not registering (rollback test build)")
+		return nil
+	}
+
 	msg := RegisterMessage{
-		Type:      "register",
-		Hostname:  hostname,
-		IP:        ip,
-		OSInfo:    OSInfo{Distro: osInfo.Distro, Release: osInfo.Release, Kernel: osInfo.Kernel},
-		SecretKey: a.config.SecretKey,
-		Platform:  runtime.GOOS,
+		Type:         "register",
+		Hostname:     hostname,
+		IP:           ip,
+		OSInfo:       OSInfo{Distro: osInfo.Distro, Release: osInfo.Release, Kernel: osInfo.Kernel},
+		SecretKey:    a.config.SecretKey,
+		Platform:     runtime.GOOS,
+		AgentVersion: Version,
+		Arch:         runtime.GOARCH,
 	}
 
 	return a.writeJSON(msg)
@@ -881,6 +940,7 @@ func (a *Agent) handleMessage(msg Message) {
 		}
 		if a.machineId != "" {
 			log.Printf("Registered with machine ID: %s", a.machineId)
+			a.onRegistered()
 		}
 
 	case "execute_command":
@@ -893,7 +953,7 @@ func (a *Agent) handleMessage(msg Message) {
 
 		// DEBUG: Log what we received
 		log.Printf("🔍 DEBUG execute_command: sessionId=%s, payload=%s, nonce=%s",
-			secureData.SessionID[:8], string(secureData.Payload), secureData.Nonce[:8])
+			short(secureData.SessionID), string(secureData.Payload), short(secureData.Nonce))
 
 		// Verify HMAC signature
 		payload, err := a.verifyHMAC(secureData, "execute_command")
@@ -925,16 +985,37 @@ func (a *Agent) handleMessage(msg Message) {
 			return
 		}
 
-		log.Printf("✅ HMAC verified for execute_command (commandId: %s, nonce: %s)", cmdData.CommandID[:8], secureData.Nonce[:8])
+		log.Printf("✅ HMAC verified for execute_command (commandId: %s, nonce: %s)", short(cmdData.CommandID), short(secureData.Nonce))
 		a.executeCommand(cmdData)
 
 	case "update_agent":
-		var data UpdateAgentData
-		if err := json.Unmarshal(msg.Data, &data); err != nil {
-			log.Printf("Failed to unmarshal update_agent: %v", err)
+		// HMAC-protected like execute_command; unsigned requests are ignored
+		var secureData SecureMessageData
+		if err := json.Unmarshal(msg.Data, &secureData); err != nil {
+			log.Printf("Failed to unmarshal update_agent secure envelope: %v", err)
 			return
 		}
-		a.updateAgent(data)
+		payload, err := a.verifyHMAC(secureData, "update_agent")
+		if err != nil {
+			log.Printf("⚠️ Rejected update_agent: %v", err)
+			return
+		}
+		payloadBytes, ok := payload.(json.RawMessage)
+		if !ok {
+			log.Printf("Failed to parse update_agent payload: unexpected type %T", payload)
+			return
+		}
+		var payloadStr string
+		if err := json.Unmarshal(payloadBytes, &payloadStr); err != nil {
+			log.Printf("Failed to unmarshal update_agent payload string: %v", err)
+			return
+		}
+		var upd UpdateAgentPayload
+		if err := json.Unmarshal([]byte(payloadStr), &upd); err != nil {
+			log.Printf("Failed to unmarshal update_agent payload: %v", err)
+			return
+		}
+		a.handleUpdateAgent(upd)
 
 	case "spawn_shell":
 		var data SpawnShellData
@@ -954,7 +1035,7 @@ func (a *Agent) handleMessage(msg Message) {
 
 		// DEBUG: Log what we received
 		log.Printf("🔍 DEBUG terminal_stdin: sessionId=%s, payload=%s, nonce=%s", 
-			secureData.SessionID[:8], string(secureData.Payload), secureData.Nonce[:8])
+			short(secureData.SessionID), string(secureData.Payload), short(secureData.Nonce))
 
 		// Server signs stdin envelopes with the logical type "terminal_input"
 		payload, err := a.verifyHMAC(secureData, "terminal_input")
@@ -1000,7 +1081,7 @@ func (a *Agent) handleMessage(msg Message) {
 
 		// DEBUG: Log what we received
 		log.Printf("🔍 DEBUG terminal_resize: sessionId=%s, payload=%s, nonce=%s", 
-			secureData.SessionID[:8], string(secureData.Payload), secureData.Nonce[:8])
+			short(secureData.SessionID), string(secureData.Payload), short(secureData.Nonce))
 
 		// Verify HMAC signature
 		payload, err := a.verifyHMAC(secureData, "terminal_resize")
@@ -1260,129 +1341,6 @@ func (a *Agent) executeCommand(data ExecuteCommandData) {
 // updateAgent handles agent self-update in a robust way
 // It creates an external update script that runs independently of the agent process
 // Security: Uses RSA-SHA256 signature verification and SHA-256 hash validation
-func (a *Agent) updateAgent(data UpdateAgentData) {
-	log.Printf("Agent update requested (commandId: %s)", data.CommandID)
-
-	sendOutput := func(output string, completed bool, exitCode int) {
-		payload := CommandResponseMessage{
-			Type:      "command_response",
-			MachineID: a.machineId,
-			CommandID: data.CommandID,
-			Output:    output,
-			ExitCode:  exitCode,
-			Completed: completed,
-		}
-		if err := a.writeJSON(payload); err != nil {
-			log.Printf("Failed to send update output: %v", err)
-		}
-	}
-
-	// Determine the server URL
-	serverURL := data.ServerURL
-	if serverURL == "" {
-		sendOutput("Error: No server URL provided for update\n", true, 1)
-		return
-	}
-	
-	// Remove trailing slash
-	serverURL = strings.TrimSuffix(serverURL, "/")
-	
-	// Determine binary filename based on OS and architecture
-	var binaryName string
-	switch runtime.GOOS {
-	case "windows":
-		switch runtime.GOARCH {
-		case "amd64":
-			binaryName = "maintainer-agent-windows-amd64.exe"
-		case "arm64":
-			binaryName = "maintainer-agent-windows-arm64.exe"
-		default:
-			sendOutput(fmt.Sprintf("Error: Unsupported Windows architecture: %s\n", runtime.GOARCH), true, 1)
-			return
-		}
-	case "linux":
-		switch runtime.GOARCH {
-		case "amd64":
-			binaryName = "maintainer-agent-linux-amd64"
-		case "arm64":
-			binaryName = "maintainer-agent-linux-arm64"
-		default:
-			sendOutput(fmt.Sprintf("Error: Unsupported Linux architecture: %s\n", runtime.GOARCH), true, 1)
-			return
-		}
-	default:
-		sendOutput(fmt.Sprintf("Error: Unsupported OS: %s\n", runtime.GOOS), true, 1)
-		return
-	}
-	
-	// Construct binary download URL
-	binaryURL := serverURL + "/downloads/" + binaryName
-
-	sendOutput(fmt.Sprintf("🔄 Starting agent update...\n"), false, 0)
-	sendOutput(fmt.Sprintf("Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH), false, 0)
-	sendOutput(fmt.Sprintf("Binary URL: %s\n", binaryURL), false, 0)
-
-	// Get current agent binary path
-	currentBinary, err := os.Executable()
-	if err != nil {
-		sendOutput(fmt.Sprintf("Error: Could not determine current binary path: %v\n", err), true, 1)
-		return
-	}
-	sendOutput(fmt.Sprintf("Current binary: %s\n", currentBinary), false, 0)
-	
-	// Create the update script using the platform-specific generator
-	updateScript := platform.Current.GenerateUpdateScript(binaryURL, currentBinary)
-
-	// Write the update script to a temporary file
-	var scriptPath string
-	if runtime.GOOS == "windows" {
-		scriptPath = filepath.Join(os.TempDir(), "maintainer-agent-update.ps1")
-	} else {
-		scriptPath = "/tmp/maintainer-agent-update.sh"
-	}
-	err = os.WriteFile(scriptPath, []byte(updateScript), 0755)
-	if err != nil {
-		sendOutput(fmt.Sprintf("Error: Could not create update script: %v\n", err), true, 1)
-		return
-	}
-
-	sendOutput(fmt.Sprintf("Update script created at %s\n", scriptPath), false, 0)
-	sendOutput("Launching update process (this agent will stop)...\n", false, 0)
-
-	// Launch the update script in a detached process via platform-specific method
-	// NOTE: Do NOT send completed=true here! The update has not finished yet.
-	// The UI should wait for the agent to reconnect (machine_status_changed → online).
-	cmd := platform.Current.BackgroundExecCommand(scriptPath)
-
-	err = cmd.Start()
-	if err != nil {
-		sendOutput(fmt.Sprintf("Error: Failed to start update process: %v\n", err), true, 1)
-		return
-	}
-
-	log.Printf("Update script launched with PID: %d", cmd.Process.Pid)
-
-	// Now send the last status message — NOT completed, just informational.
-	// The UI will mark it complete when the agent reconnects.
-	sendOutput("Update gestartet. Agent wird sich nach dem Update automatisch neu verbinden...\n", false, 0)
-
-	go func() {
-		time.Sleep(1 * time.Second)
-		log.Println("Agent shutting down for update...")
-		if a.conn != nil {
-			a.conn.Close()
-		}
-		// Signal graceful shutdown instead of os.Exit — lets the Windows
-		// Service handler perform proper SCM shutdown.
-		select {
-		case <-a.shutdownCh:
-			// Already closed
-		default:
-			close(a.shutdownCh)
-		}
-	}()
-}
-
 func (a *Agent) spawnShell(data SpawnShellData) {
 	log.Printf("Spawning shell for session: %s", data.SessionID)
 

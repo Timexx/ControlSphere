@@ -75,14 +75,6 @@ func (p *LinuxPlatform) ShellCommand() []string {
 	return []string{"/bin/bash", "-c"}
 }
 
-func (p *LinuxPlatform) BackgroundExecCommand(scriptPath string) *exec.Cmd {
-	cmd := exec.Command("setsid", "nohup", "/bin/bash", scriptPath)
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	cmd.Stdin = nil
-	return cmd
-}
-
 func (p *LinuxPlatform) DangerousCommands() []string {
 	return []string{
 		"reboot",
@@ -374,122 +366,6 @@ func (p *LinuxPlatform) CheckAuthLogIncremental(failedLoginCounts map[string]int
 	}
 
 	return events
-}
-
-func (p *LinuxPlatform) GenerateUpdateScript(binaryURL, currentBinary string) string {
-	return fmt.Sprintf(`#!/bin/bash
-set -e
-
-BINARY_URL="%s"
-CURRENT_BINARY="%s"
-LOG_FILE="/tmp/maintainer-agent-update.log"
-NEW_BINARY="/tmp/maintainer-agent-new"
-
-log() {
-    echo "[$(date '+%%%%Y-%%%%m-%%%%d %%%%H:%%%%M:%%%%S')] $1" | tee -a "$LOG_FILE"
-}
-
-log "Maintainer Agent Update Started"
-log "Binary URL: $BINARY_URL"
-log "Current binary: $CURRENT_BINARY"
-
-# Wait for agent to disconnect
-sleep 3
-
-# Stop the service
-log "Stopping maintainer-agent service..."
-if systemctl is-active --quiet maintainer-agent 2>/dev/null; then
-    systemctl stop maintainer-agent
-    sleep 2
-fi
-
-# Kill any stray process
-pkill -9 -f "maintainer-agent" 2>/dev/null || true
-sleep 1
-
-# Download new binary with cache buster
-log "Downloading new binary from $BINARY_URL..."
-TIMESTAMP=$(date +%%s)
-DOWNLOAD_URL="${BINARY_URL}?t=${TIMESTAMP}"
-
-if command -v curl &> /dev/null; then
-    if ! curl -fsSL "$DOWNLOAD_URL" -o "$NEW_BINARY"; then
-        log "ERROR: Download failed with curl!"
-        systemctl start maintainer-agent 2>/dev/null || true
-        exit 1
-    fi
-elif command -v wget &> /dev/null; then
-    if ! wget -q -O "$NEW_BINARY" "$DOWNLOAD_URL"; then
-        log "ERROR: Download failed with wget!"
-        systemctl start maintainer-agent 2>/dev/null || true
-        exit 1
-    fi
-else
-    log "ERROR: Neither curl nor wget available!"
-    systemctl start maintainer-agent 2>/dev/null || true
-    exit 1
-fi
-
-# Verify downloaded file
-if [ ! -f "$NEW_BINARY" ]; then
-    log "ERROR: Downloaded binary not found!"
-    systemctl start maintainer-agent 2>/dev/null || true
-    exit 1
-fi
-
-FILE_SIZE=$(stat -f%%z "$NEW_BINARY" 2>/dev/null || stat -c%%s "$NEW_BINARY" 2>/dev/null || echo 0)
-if [ "$FILE_SIZE" -lt 1048576 ]; then
-    log "ERROR: Downloaded binary too small ($FILE_SIZE bytes) - likely download error"
-    rm -f "$NEW_BINARY"
-    systemctl start maintainer-agent 2>/dev/null || true
-    exit 1
-fi
-
-log "Download complete. Size: $FILE_SIZE bytes"
-
-# Backup current binary
-log "Creating backup of current binary..."
-cp "$CURRENT_BINARY" "${CURRENT_BINARY}.backup" 2>/dev/null || true
-
-# Replace binary
-log "Replacing binary..."
-chmod +x "$NEW_BINARY"
-if ! mv "$NEW_BINARY" "$CURRENT_BINARY"; then
-    log "ERROR: Failed to replace binary!"
-    if [ -f "${CURRENT_BINARY}.backup" ]; then
-        log "Restoring backup..."
-        mv "${CURRENT_BINARY}.backup" "$CURRENT_BINARY"
-    fi
-    systemctl start maintainer-agent 2>/dev/null || true
-    exit 1
-fi
-chmod +x "$CURRENT_BINARY"
-log "Binary replaced successfully"
-
-# Start the service
-log "Starting maintainer-agent service..."
-systemctl start maintainer-agent 2>/dev/null || true
-
-# Wait and verify service started
-sleep 3
-if systemctl is-active --quiet maintainer-agent 2>/dev/null; then
-    log "✅ Update successful! Service is running."
-    # Remove backup after successful update
-    rm -f "${CURRENT_BINARY}.backup"
-else
-    log "⚠️ Service failed to start, restoring backup..."
-    if [ -f "${CURRENT_BINARY}.backup" ]; then
-        mv "${CURRENT_BINARY}.backup" "$CURRENT_BINARY"
-        systemctl start maintainer-agent 2>/dev/null || true
-        log "Backup restored and service started"
-    fi
-fi
-
-# Cleanup temporary files and self-delete
-rm -f "$NEW_BINARY"
-rm -f "$0"
-log "Update process complete!"
-`, binaryURL, currentBinary)
 }
 
 func (p *LinuxPlatform) ShutdownSignals() []os.Signal {
