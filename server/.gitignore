@@ -44,3 +44,6 @@ prisma/dev.db-journal
 
 # Agent binaries
 public/downloads/maintainer-agent*
+
+# Agent build manifest
+public/downloads/manifest.json

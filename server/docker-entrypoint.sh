@@ -45,8 +45,10 @@ if [ -z "$DATABASE_URL" ]; then
 fi
 
 # -- Build agent binaries if missing (for native deployments) ------------
-if [ -f "/app/scripts/build-agents-if-needed.sh" ]; then
-  sh /app/scripts/build-agents-if-needed.sh
+# Non-fatal: in the Docker image there is no git/go toolchain; binaries are
+# copied in at image build time.
+if [ -f "/app/scripts/build-agents-if-needed.sh" ] && command -v bash >/dev/null 2>&1; then
+  bash /app/scripts/build-agents-if-needed.sh || echo "[agent-build] skipped (not buildable here)"
 fi
 
 # -- Run Prisma migrations ------------------------------------------------
