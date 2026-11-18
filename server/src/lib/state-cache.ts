@@ -77,7 +77,9 @@ class StateCache {
           updatedAt: true,
         },
       }),
-      // One metric per machine (latest) — uses the composite index [machineId, timestamp]
+      // One metric per machine (latest). LATERAL + LIMIT 1 walks the composite
+      // index [machineId, timestamp] backwards per machine (~30 ms); a
+      // DISTINCT ON over the whole Metric table took ~50 s with 7.5 M rows.
       prisma.$queryRaw<Array<{
         machineId: string
         cpuUsage: number
@@ -90,11 +92,16 @@ class StateCache {
         disks: any
         uptime: number
       }>>`
-        SELECT DISTINCT ON ("machineId")
-          "machineId", "cpuUsage", "ramUsage", "ramTotal", "ramUsed",
-          "diskUsage", "diskTotal", "diskUsed", "disks", "uptime"
-        FROM "Metric"
-        ORDER BY "machineId", "timestamp" DESC
+        SELECT lm.*
+        FROM "Machine" mc
+        CROSS JOIN LATERAL (
+          SELECT "machineId", "cpuUsage", "ramUsage", "ramTotal", "ramUsed",
+                 "diskUsage", "diskTotal", "diskUsed", "disks", "uptime"
+          FROM "Metric"
+          WHERE "machineId" = mc.id
+          ORDER BY "timestamp" DESC
+          LIMIT 1
+        ) lm
       `,
       prisma.port.findMany({
         select: { machineId: true, port: true, proto: true, service: true, state: true },
