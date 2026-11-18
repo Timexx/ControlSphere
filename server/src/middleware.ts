@@ -39,17 +39,23 @@ function isAdminPath(pathname: string) {
   return (
     ADMIN_PATHS_EXACT.has(pathname) ||
     pathname.startsWith('/api/admin/') ||
+    // Not used by agents or the UI; kept for manual admin use only
+    pathname === '/api/register' || pathname.startsWith('/api/register/') ||
+    pathname === '/api/agent-source' || pathname.startsWith('/api/agent-source/') ||
     pathname === '/settings' || pathname.startsWith('/settings/') ||
     pathname === '/audit-logs' || pathname.startsWith('/audit-logs/') ||
     pathname === '/api/audit-logs' || pathname.startsWith('/api/audit-logs/')
   )
 }
 
+// Paths without a browser session. Agent endpoints authenticate themselves
+// (secret key per request); keep this list as narrow as possible – a bare
+// '/api/agent' prefix would also match '/api/agent-source' etc.
 function isBypassedPath(pathname: string) {
   return (
     pathname.startsWith('/_next') ||
-    pathname.startsWith('/api/register') ||
-    pathname.startsWith('/api/agent') ||
+    pathname.startsWith('/api/agent/') ||
+    pathname === '/api/agent-download' ||
     pathname.startsWith('/downloads/') ||
     pathname.startsWith('/ws/')
   )
