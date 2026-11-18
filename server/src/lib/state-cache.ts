@@ -36,6 +36,8 @@ export interface CachedMachine {
   hostname: string
   ip: string
   osInfo: string | null
+  agentVersion?: string | null
+  agentArch?: string | null
   status: string
   lastSeen: Date
   notes: string | null
@@ -70,6 +72,8 @@ class StateCache {
           hostname: true,
           ip: true,
           osInfo: true,
+          agentVersion: true,
+          agentArch: true,
           status: true,
           lastSeen: true,
           notes: true,
@@ -205,6 +209,8 @@ class StateCache {
     hostname: string
     ip: string
     osInfo: string | null
+    agentVersion?: string | null
+    agentArch?: string | null
     status: string
     lastSeen: Date
     notes: string | null

@@ -59,6 +59,39 @@ describe('MessageValidator', () => {
     })
   })
 
+  describe('validate - register agentVersion/arch', () => {
+    const base = { secretKey: 'a'.repeat(64), hostname: 'server-1', ip: '192.168.1.1' }
+
+    test('accepts agentVersion, arch and platform and passes them through', () => {
+      const result = validator.validate(
+        { ...base, agentVersion: 'pre-sanierung-2026-11-9-gabc1234', arch: 'arm64', platform: 'linux' },
+        'register'
+      )
+      expect(result.valid).toBe(true)
+      expect(result.data.agentVersion).toBe('pre-sanierung-2026-11-9-gabc1234')
+      expect(result.data.arch).toBe('arm64')
+    })
+
+    test('accepts register without the new fields (old agents)', () => {
+      expect(validator.validate(base, 'register').valid).toBe(true)
+    })
+
+    test.each([
+      ['too long', 'a'.repeat(200)],
+      ['with space', 'v 1'],
+      ['with semicolon', 'v1;rm'],
+      ['not a string', 123],
+      ['empty', ''],
+    ])('rejects invalid agentVersion (%s)', (_n, value) => {
+      const result = validator.validate({ ...base, agentVersion: value }, 'register')
+      expect(result.valid).toBe(false)
+    })
+
+    test('rejects invalid arch', () => {
+      expect(validator.validate({ ...base, arch: 'amd 64' }, 'register').valid).toBe(false)
+    })
+  })
+
   describe('validate - command_response schema', () => {
     test('should validate valid command response', () => {
       const data = {

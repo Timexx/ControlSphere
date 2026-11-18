@@ -30,6 +30,8 @@ export async function GET() {
         hostname: m.hostname,
         ip: m.ip,
         osInfo: m.osInfo,
+        agentVersion: m.agentVersion ?? null,
+        agentArch: m.agentArch ?? null,
         status: m.status,
         lastSeen: m.lastSeen,
         metrics: m.latestMetric ? [m.latestMetric] : [],
@@ -48,6 +50,8 @@ export async function GET() {
           hostname: true,
           ip: true,
           osInfo: true,
+          agentVersion: true,
+          agentArch: true,
           status: true,
           lastSeen: true,
           metrics: {

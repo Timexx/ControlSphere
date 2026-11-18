@@ -46,6 +46,8 @@ model Machine {
   hostname        String
   ip              String
   osInfo          String?  @db.Text // JSON string: { distro, version, kernel }
+  agentVersion    String? // Agent build version as reported on register (null = unknown/old agent)
+  agentArch       String? // Agent GOARCH as reported on register (null = unknown/old agent)
   status          String   @default("offline") // online, offline, error
   lastSeen        DateTime @default(now())
   secretKey       String?  @unique // DEPRECATED: Will be removed after migration

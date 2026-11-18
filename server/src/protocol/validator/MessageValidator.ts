@@ -25,7 +25,7 @@ export interface IMessageValidator {
 const MESSAGE_SCHEMAS: Record<string, any> = {
   register: {
     required: ['secretKey', 'hostname', 'ip'],
-    optional: ['type', 'osInfo', 'machineInfo'],
+    optional: ['type', 'osInfo', 'machineInfo', 'agentVersion', 'arch', 'platform'],
     validate: (data: any) => {
       if (typeof data.secretKey !== 'string' || data.secretKey.length !== 64) {
         return 'secretKey must be 64-character hex string'
@@ -35,6 +35,14 @@ const MESSAGE_SCHEMAS: Record<string, any> = {
       }
       if (!data.ip || !/^(\d{1,3}\.){3}\d{1,3}$/.test(data.ip)) {
         return 'Invalid IP address'
+      }
+      // Optional agent metadata: short, restricted charset (stored and rendered in the UI)
+      for (const field of ['agentVersion', 'arch', 'platform']) {
+        const value = data[field]
+        if (value === undefined || value === null) continue
+        if (typeof value !== 'string' || value.length > 64 || !/^[A-Za-z0-9._+-]+$/.test(value)) {
+          return `Invalid ${field}`
+        }
       }
       return null
     }

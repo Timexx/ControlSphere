@@ -463,6 +463,8 @@ export class AgentConnectionManager {
           hostname: data.hostname,
           ip: cleanIP,
           osInfo: data.osInfo ? JSON.stringify(data.osInfo) : undefined,
+          agentVersion: data.agentVersion ?? null,
+          agentArch: data.arch ?? null,
           status: 'online',
           lastSeen: new Date(),
           secretKey: encryptedSecret, // Store ENCRYPTED secret for HMAC operations
@@ -472,7 +474,8 @@ export class AgentConnectionManager {
       this.broadcast({ type: 'machine_status_changed', machineId: machine.id, status: 'online' })
       stateCache.upsertMachine({
         id: machine.id, hostname: machine.hostname, ip: machine.ip,
-        osInfo: machine.osInfo, status: machine.status, lastSeen: machine.lastSeen,
+        osInfo: machine.osInfo, agentVersion: (machine as any).agentVersion ?? null, agentArch: (machine as any).agentArch ?? null,
+        status: machine.status, lastSeen: machine.lastSeen,
         notes: (machine as any).notes ?? null, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
       })
     } else {
@@ -481,6 +484,8 @@ export class AgentConnectionManager {
           hostname: data.hostname,
           ip: cleanIP,
           osInfo: data.osInfo ? JSON.stringify(data.osInfo) : '{}',
+          agentVersion: data.agentVersion ?? null,
+          agentArch: data.arch ?? null,
           secretKey: encryptedSecret, // Store ENCRYPTED secret for HMAC operations
           secretKeyHash,
           status: 'online'
@@ -489,7 +494,8 @@ export class AgentConnectionManager {
       this.broadcast({ type: 'machine_registered', machine: sanitizeMachine(machine) })
       stateCache.upsertMachine({
         id: machine.id, hostname: machine.hostname, ip: machine.ip,
-        osInfo: machine.osInfo, status: machine.status, lastSeen: machine.lastSeen,
+        osInfo: machine.osInfo, agentVersion: (machine as any).agentVersion ?? null, agentArch: (machine as any).agentArch ?? null,
+        status: machine.status, lastSeen: machine.lastSeen,
         notes: (machine as any).notes ?? null, createdAt: machine.createdAt, updatedAt: machine.updatedAt,
       })
       // Emit notification event for new agent registration

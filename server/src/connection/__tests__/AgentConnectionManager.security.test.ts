@@ -128,6 +128,44 @@ describe('AgentConnectionManager security', () => {
     expect(ws.close).not.toHaveBeenCalled()
   })
 
+  it('stores agentVersion and arch on register (update path)', async () => {
+    const ws = connect()
+    send(ws, { ...registerMsg(), agentVersion: 'dev', arch: 'amd64' })
+    await flush()
+    const data = prisma.machine.update.mock.calls[0][0].data
+    expect(data.agentVersion).toBe('dev')
+    expect(data.agentArch).toBe('amd64')
+  })
+
+  it('stores agentVersion and arch on register (create path)', async () => {
+    prisma.machine.findFirst.mockResolvedValue(null)
+    const ws = connect()
+    send(ws, { ...registerMsg(), agentVersion: 'v1.2.3', arch: 'arm64' })
+    await flush()
+    const data = prisma.machine.create.mock.calls[0][0].data
+    expect(data.agentVersion).toBe('v1.2.3')
+    expect(data.agentArch).toBe('arm64')
+  })
+
+  it('stores null agentVersion/arch for old agents without the fields', async () => {
+    const ws = connect()
+    send(ws, registerMsg())
+    await flush()
+    const data = prisma.machine.update.mock.calls[0][0].data
+    expect(data.agentVersion).toBeNull()
+    expect(data.agentArch).toBeNull()
+  })
+
+  it('rejects register with an invalid agentVersion and does not touch the DB', async () => {
+    const ws = connect()
+    send(ws, { ...registerMsg(), agentVersion: 'bad;version' })
+    await flush()
+    expect(prisma.machine.update).not.toHaveBeenCalled()
+    expect(prisma.machine.create).not.toHaveBeenCalled()
+    const sent = ws.send.mock.calls.map((c: any[]) => JSON.parse(c[0]))
+    expect(sent.some((m: any) => m.type === 'registered')).toBe(false)
+  })
+
   it('(b) after register a heartbeat with a foreign machineId is processed for the bound id', async () => {
     const ws = connect()
     send(ws, registerMsg())
