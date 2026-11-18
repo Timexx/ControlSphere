@@ -189,11 +189,15 @@ func TestConfirmAndRollback(t *testing.T) {
 		t.Fatalf("expected failure report, got action=%v", action)
 	}
 
-	// onRegistered clears the marker.
+	// On Windows the rolled-back binary cannot be deleted while it still
+	// runs and stays behind as .failed – simulate that leftover.
+	writeFile(t, p.failed, "new")
+
+	// onRegistered clears the marker and the leftover.
 	a := &Agent{pending: &pendingUpdate{paths: p, action: action, marker: m}}
 	a.onRegistered()
-	if exists(p.marker) {
-		t.Fatal("marker not removed after report")
+	if exists(p.marker) || exists(p.failed) {
+		t.Fatal("marker or .failed not removed after report")
 	}
 }
 

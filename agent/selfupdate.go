@@ -99,6 +99,7 @@ type updatePaths struct {
 	exe    string
 	newExe string
 	bak    string
+	failed string // rolled-back binary; on Windows it cannot be deleted while it still runs
 	marker string
 }
 
@@ -123,6 +124,7 @@ func pathsFor(exe, dir string) updatePaths {
 		exe:    exe,
 		newExe: newExe,
 		bak:    exe + ".bak",
+		failed: exe + ".failed",
 		marker: filepath.Join(dir, "update-pending"),
 	}
 }
@@ -373,6 +375,7 @@ func evaluateUpdateMarker(p updatePaths, running string) (startupAction, *update
 		// No update in flight: clean leftovers of earlier attempts.
 		os.Remove(p.newExe)
 		os.Remove(p.bak)
+		os.Remove(p.failed)
 		return startupNormal, nil
 	}
 
@@ -387,6 +390,7 @@ func evaluateUpdateMarker(p updatePaths, running string) (startupAction, *update
 		os.Remove(p.marker)
 		os.Remove(p.newExe)
 		os.Remove(p.bak)
+		os.Remove(p.failed)
 		return startupNormal, nil
 	}
 
@@ -419,16 +423,17 @@ func rollbackBinary(p updatePaths) error {
 	if _, err := os.Stat(p.bak); err != nil {
 		return fmt.Errorf("no backup binary: %v", err)
 	}
-	failed := p.exe + ".failed"
-	os.Remove(failed)
-	if err := os.Rename(p.exe, failed); err != nil {
+	os.Remove(p.failed)
+	if err := os.Rename(p.exe, p.failed); err != nil {
 		return err
 	}
 	if err := os.Rename(p.bak, p.exe); err != nil {
-		os.Rename(failed, p.exe)
+		os.Rename(p.failed, p.exe)
 		return err
 	}
-	os.Remove(failed)
+	// Fails on Windows while the rolled-back binary is still running; the
+	// restored agent removes it after registering (onRegistered).
+	os.Remove(p.failed)
 	return nil
 }
 
@@ -480,6 +485,7 @@ func (a *Agent) onRegistered() {
 	os.Remove(p.paths.marker)
 	os.Remove(p.paths.newExe)
 	os.Remove(p.paths.bak)
+	os.Remove(p.paths.failed)
 
 	var output string
 	exitCode := 0
