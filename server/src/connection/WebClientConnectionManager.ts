@@ -11,29 +11,9 @@ import { MessageRouter } from '../protocol/router/MessageRouter'
 import { SecureRemoteTerminalService } from '../domain/services/SecureRemoteTerminalService'
 import { SecretEncryptionService } from '../infrastructure/crypto/SecretEncryptionService'
 import type { MachineAccess } from './ConnectionRegistry'
-import type { UserRole } from '../lib/authorization'
-
-// Relative imports only: '@/...' aliases do not resolve in the ts-node custom server.
-async function loadAuthorization() {
-  return import('../lib/authorization')
-}
-async function loadPrisma() {
-  return (await import('../lib/prisma')).prisma
-}
-async function auditDenied(userId: string, machineId: string | undefined, details: Record<string, unknown>) {
-  try {
-    const { createAuditEntry, AuditActions } = await import('../lib/audit')
-    await createAuditEntry({
-      action: AuditActions.MACHINE_ACCESS_DENIED,
-      userId,
-      machineId,
-      severity: 'warn',
-      details,
-    } as any)
-  } catch {
-    // auditing must never break request handling
-  }
-}
+// Relative imports only: '@/...' aliases do not resolve in the ts-node custom server
+// (which is also why lib/audit.ts cannot be used here).
+import { canAccessMachine, getAccessibleMachineIds, type UserRole } from '../lib/authorization'
 
 const VALID_ROLES: UserRole[] = ['admin', 'user', 'viewer']
 const ACCESS_REFRESH_MS = 60_000
@@ -110,9 +90,24 @@ export class WebClientConnectionManager {
   }
 
   /** Load role/active flag from the DB. Returns null for unknown or inactive users. */
+  private async auditDenied(userId: string, machineId: string | undefined, details: Record<string, unknown>): Promise<void> {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action: 'MACHINE_ACCESS_DENIED',
+          userId,
+          machineId: machineId ?? null,
+          severity: 'warn',
+          details: JSON.stringify(details),
+        },
+      })
+    } catch {
+      // auditing must never break request handling (e.g. unknown machineId FK)
+    }
+  }
+
   private async loadClientUser(userId: string): Promise<{ role: UserRole; username: string } | null> {
-    const prisma = await loadPrisma()
-    const user = await prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { role: true, active: true, username: true },
     })
@@ -122,7 +117,6 @@ export class WebClientConnectionManager {
   }
 
   private async loadMachineAccess(userId: string, role: UserRole): Promise<MachineAccess> {
-    const { getAccessibleMachineIds } = await loadAuthorization()
     const ids = await getAccessibleMachineIds(userId, role)
     return ids === 'all' ? 'all' : new Set(ids)
   }
@@ -165,7 +159,6 @@ export class WebClientConnectionManager {
         if (this.registry.getTerminalSession(sessionId) !== machineId) return 'session does not belong to machine'
         if (this.registry.getTerminalOwner(sessionId) !== ws) return 'session not owned by this connection'
       } else {
-        const { canAccessMachine } = await loadAuthorization()
         if (!(await canAccessMachine(client.userId, role, machineId))) return 'no machine access'
       }
     }
@@ -287,7 +280,7 @@ export class WebClientConnectionManager {
             reason: denied,
           })
           if (messageType !== 'terminal_input' && messageType !== 'terminal_resize') {
-            await auditDenied(session.userId, validationResult.data?.machineId, { reason: denied, type: messageType, channel: 'websocket' })
+            await this.auditDenied(session.userId, validationResult.data?.machineId, { reason: denied, type: messageType, channel: 'websocket' })
           }
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'error', message: 'Forbidden', requestType: messageType }))
