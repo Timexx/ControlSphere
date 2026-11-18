@@ -197,7 +197,7 @@ type Agent struct {
 	scanStartedAt  time.Time
 	
 	// Security monitoring state
-	fileHashes         map[string]string // Stores hashes for integrity monitoring
+	fileHashes         map[string]fileHashEntry // Hash cache for integrity monitoring
 	fileHashesMu       sync.Mutex
 	
 	// Track reported events to avoid duplicates
@@ -671,7 +671,7 @@ func runAgent() {
 		config:            config,
 		terminals:         make(map[string]platform.Terminal),
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
-		fileHashes:        make(map[string]string),
+		fileHashes:        make(map[string]fileHashEntry),
 		reportedEvents:    make(map[string]time.Time),
 		failedLoginCounts: make(map[string]int),
 		shutdownCh:        make(chan struct{}),
@@ -1514,14 +1514,42 @@ func computeFileHash(path string) (string, error) {
 	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
-// collectIntegrityPaths walks the filesystem to monitor all files (excluding volatile/system pseudo file systems)
+const (
+	// integrityMaxFileSizeDefault: files larger than this are not hashed.
+	integrityMaxFileSizeDefault int64 = 64 << 20
+	// integrityRehashInterval: even if size+mtime are unchanged, a file is
+	// re-hashed when its last real hash is older than this (detects mtime forgery).
+	integrityRehashInterval = 24 * time.Hour
+)
+
+// Overridable for tests.
+var (
+	integrityMaxFileSize = integrityMaxFileSizeDefault
+	integrityHashFunc    = computeFileHash
+	integrityNow         = time.Now
+)
+
+// fileHashEntry is the per-path integrity cache entry.
+type fileHashEntry struct {
+	size     int64
+	modTime  time.Time
+	hash     string
+	hashedAt time.Time
+}
+
+// collectIntegrityPaths collects the files to monitor using the platform configuration.
 func collectIntegrityPaths() []string {
+	return collectIntegrityPathsFrom(
+		platform.Current.IntegrityRoots(),
+		platform.Current.IntegritySkipDirs(),
+		platform.Current.CriticalFiles(),
+	)
+}
+
+// collectIntegrityPathsFrom walks the given roots (excluding skip dirs) and always adds the critical files.
+func collectIntegrityPathsFrom(integrityRoots []string, integritySkipDirs map[string]bool, criticalFiles []string) []string {
 	var paths []string
 	seen := make(map[string]bool)
-
-	integrityRoots := platform.Current.IntegrityRoots()
-	integritySkipDirs := platform.Current.IntegritySkipDirs()
-	criticalFiles := platform.Current.CriticalFiles()
 
 	for _, root := range integrityRoots {
 		filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -1559,6 +1587,7 @@ func collectIntegrityPaths() []string {
 	// Always include the critical set to ensure they are monitored even if permissions block traversal
 	for _, p := range criticalFiles {
 		if !seen[p] {
+			seen[p] = true
 			paths = append(paths, p)
 		}
 	}
@@ -1568,45 +1597,70 @@ func collectIntegrityPaths() []string {
 
 // checkFileIntegrity monitors critical system files for changes
 func (a *Agent) checkFileIntegrity() []SecurityFinding {
-	var findings []SecurityFinding
-
 	a.fileHashesMu.Lock()
 	defer a.fileHashesMu.Unlock()
 
-	paths := collectIntegrityPaths()
+	return checkIntegrityPaths(collectIntegrityPaths(), a.fileHashes)
+}
+
+// checkIntegrityPaths compares the given paths against the cache (which it updates)
+// and returns findings for modified and removed files. The caller must hold the lock.
+func checkIntegrityPaths(paths []string, cache map[string]fileHashEntry) []SecurityFinding {
+	var findings []SecurityFinding
+	now := integrityNow()
 
 	for _, path := range paths {
-		currentHash, err := computeFileHash(path)
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			// File doesn't exist or not readable - skip
+			continue
+		}
+		if info.Size() > integrityMaxFileSize {
+			// Too large to hash cheaply - skip
+			continue
+		}
+
+		previous, exists := cache[path]
+		if exists && previous.size == info.Size() && previous.modTime.Equal(info.ModTime()) &&
+			now.Sub(previous.hashedAt) < integrityRehashInterval {
+			// Unchanged by size+mtime and hash is fresh: reuse stored hash
+			continue
+		}
+
+		currentHash, err := integrityHashFunc(path)
 		if err != nil {
 			// File doesn't exist or not readable - skip
 			continue
 		}
-		if previousHash, exists := a.fileHashes[path]; exists {
-			if previousHash != currentHash {
-				findings = append(findings, SecurityFinding{
-					TargetPath: path,
-					Message:    fmt.Sprintf("File modified: %s", path),
-					Severity:   "high",
-					Expected:   previousHash[:16] + "...",
-					Actual:     currentHash[:16] + "...",
-					Hash:       currentHash,
-				})
-				log.Printf("🔴 INTEGRITY ALERT: %s has been modified!", path)
-			}
+		if exists && previous.hash != currentHash {
+			findings = append(findings, SecurityFinding{
+				TargetPath: path,
+				Message:    fmt.Sprintf("File modified: %s", path),
+				Severity:   "high",
+				Expected:   previous.hash[:16] + "...",
+				Actual:     currentHash[:16] + "...",
+				Hash:       currentHash,
+			})
+			log.Printf("🔴 INTEGRITY ALERT: %s has been modified!", path)
 		}
 		// Update stored hash
-		a.fileHashes[path] = currentHash
+		cache[path] = fileHashEntry{
+			size:     info.Size(),
+			modTime:  info.ModTime(),
+			hash:     currentHash,
+			hashedAt: now,
+		}
 	}
 
 	// Detect deletions
-	for storedPath := range a.fileHashes {
+	for storedPath := range cache {
 		if _, err := os.Stat(storedPath); err != nil && os.IsNotExist(err) {
 			findings = append(findings, SecurityFinding{
 				TargetPath: storedPath,
 				Message:    fmt.Sprintf("File removed: %s", storedPath),
 				Severity:   "high",
 			})
-			delete(a.fileHashes, storedPath)
+			delete(cache, storedPath)
 		}
 	}
 

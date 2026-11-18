@@ -230,8 +230,33 @@ func (p *LinuxPlatform) CriticalFiles() []string {
 	}
 }
 
-func (p *LinuxPlatform) IntegrityRoots() []string { return []string{"/"} }
+// IntegrityRoots returns the security-relevant directories that are walked for
+// file integrity monitoring. Only configuration, executables, boot files and
+// systemd units are covered - NOT the whole filesystem (data directories,
+// node_modules, backups etc. are neither security-relevant nor cheap to hash).
+// /bin, /sbin and /lib are symlinks to /usr/* on merged-usr systems and are
+// therefore intentionally not listed. Roots that do not exist are skipped.
+func (p *LinuxPlatform) IntegrityRoots() []string {
+	candidates := []string{
+		"/etc",
+		"/usr/bin",
+		"/usr/sbin",
+		"/usr/local/bin",
+		"/usr/local/sbin",
+		"/boot",
+		"/usr/lib/systemd/system",
+	}
+	roots := make([]string, 0, len(candidates))
+	for _, r := range candidates {
+		if fi, err := os.Stat(r); err == nil && fi.IsDir() {
+			roots = append(roots, r)
+		}
+	}
+	return roots
+}
 
+// IntegritySkipDirs lists directories that are not walked. Certificates
+// (/etc/ssl/certs) are deliberately NOT skipped as they are security relevant.
 func (p *LinuxPlatform) IntegritySkipDirs() map[string]bool {
 	return map[string]bool{
 		"/proc": true,
@@ -239,6 +264,11 @@ func (p *LinuxPlatform) IntegritySkipDirs() map[string]bool {
 		"/dev":  true,
 		"/run":  true,
 		"/tmp":  true,
+		// Only symlinks into /etc/* (managed by update-alternatives); the
+		// targets are covered by their own location.
+		"/etc/alternatives": true,
+		// etckeeper repository: git object store, changes on every commit.
+		"/etc/.git": true,
 	}
 }
 
